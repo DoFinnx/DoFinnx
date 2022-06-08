@@ -1425,7 +1425,7 @@ gg.clearResults()
 end
 ---------------------------------------------------------------------
 function cfg()
-cont = gg.makeRequest("https://waithware-private.000webhostapp.com/waithlegit/cfg.lua").content
+cont = gg.makeRequest("https://pastebin.com/v0mFBgDR").content
 pcall(load(cont))
 end
 ------------------------[Важное]------------------------------------
