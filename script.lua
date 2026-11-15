@@ -1782,7 +1782,7 @@ function Tab:Group(name, side)
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundColor3 = Theme.Card,
-		BackgroundTransparency = 0.1,
+		BackgroundTransparency = 0.4,
 		BorderSizePixel = 0,
 		LayoutOrder = 1,
 		Parent = g.Holder,
