@@ -1406,22 +1406,26 @@ function Library:_openSettings(anchor)
 	local lib = self
 	self:_popup(anchor, 250, 232, function(frame)
 		local lp = Players.LocalPlayer
-		local av = create("ImageLabel", {
-			Position = UDim2.fromOffset(12, 12),
-			Size = UDim2.fromOffset(36, 36),
-			BackgroundColor3 = Theme.Box,
-			BorderSizePixel = 0,
-			Parent = frame,
-		})
-		corner(av, 18)
-		task.spawn(function()
-			local ok, img = pcall(function()
-				return Players:GetUserThumbnailAsync(lp.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-			end)
-			if ok and img then
-				av.Image = img
-			end
-		end)
+local av = create("ImageLabel", {
+    Position = UDim2.fromOffset(12, 12),
+    Size = UDim2.fromOffset(36, 36),
+    BackgroundColor3 = Theme.Box,
+    BorderSizePixel = 0,
+    Image = "", -- Очищаем на всякий случай
+    Parent = frame,
+})
+corner(av, 18)
+
+-- Загрузка аватарки
+task.spawn(function()
+    local lp = Players.LocalPlayer
+    local ok, img = pcall(function()
+        return Players:GetUserThumbnailAsync(lp.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+    end)
+    if ok and img then
+        av.Image = img
+    end
+end)
 		local n = label(frame, lp.DisplayName, 13, WHITE, FONT_BOLD)
 		n.Position = UDim2.fromOffset(56, 14)
 		n.Size = UDim2.new(1, -68, 0, 16)
