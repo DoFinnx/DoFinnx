@@ -399,7 +399,7 @@ function Library.new(opts)
 		Name = "Main",
 		Size = UDim2.fromScale(1, 1),
 		BackgroundColor3 = Theme.Window,
-		BackgroundTransparency = 0.04,
+		BackgroundTransparency = 0.4,
 		BorderSizePixel = 0,
 		GroupTransparency = 1,
 		Visible = false,
