@@ -1,1451 +1,1253 @@
+--[[
+	NeverloseUI — меню в стиле Neverlose V4 для Roblox (Luau)
+	Тип: ModuleScript (подключать из LocalScript через require)
 
-function start()
-startmenu = gg.choice({
-	"Legit", 
-	"Rage", 
-	"Chams",
-	"Info",
-	"Exit"
-},nil,"RedSoft")
-if startmenu == 1 then legit() end
-if startmenu == 2 then rage() end
-if startmenu == 3 then chams() end
-if startmenu == 4 then info() end
-if startmenu == 5 then quit() end
+	Компоненты: Tab / Section / Group, Toggle, Slider (int/float + ввод с клавиатуры),
+	Combo (одиночный и мульти), ColorPicker (SV + Hue + Alpha + HEX), Keybind, Button, Label.
+	Плюс: общий акцент-цвет, стартовая анимация, перетаскивание, масштаб (DPI),
+	размытие фона (BlurEffect) и скрытие/показ по клавише.
+]]
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
+
+local Theme = {
+	Window = Color3.fromRGB(10, 14, 19),
+	Top = Color3.fromRGB(13, 18, 24),
+	Sidebar = Color3.fromRGB(12, 16, 21),
+	Group = Color3.fromRGB(17, 23, 30),
+	Item = Color3.fromRGB(26, 34, 43),
+	Popup = Color3.fromRGB(14, 19, 25),
+	Stroke = Color3.fromRGB(33, 43, 54),
+	Text = Color3.fromRGB(214, 222, 231),
+	SubText = Color3.fromRGB(116, 130, 146),
+}
+
+local FONT = Enum.Font.GothamMedium
+local FONT_BOLD = Enum.Font.GothamBold
+local MOUSE1 = Enum.UserInputType.MouseButton1
+local TOUCH = Enum.UserInputType.Touch
+local MOVE = Enum.UserInputType.MouseMovement
+
+---------------------------------------------------------------------
+-- helpers
+---------------------------------------------------------------------
+local function create(class, props, children)
+	local inst = Instance.new(class)
+	local parent
+	for k, v in pairs(props or {}) do
+		if k == "Parent" then
+			parent = v
+		else
+			inst[k] = v
+		end
+	end
+	for _, c in ipairs(children or {}) do
+		c.Parent = inst
+	end
+	inst.Parent = parent
+	return inst
 end
 
-function legit()
-legitmenu = gg.choice({
-	"Aim Menu",
-	"Norecoil Menu",
-	"RadarHack",
-	"Cfg Builder",
-	"Back"
-},nil,"Script By RedSoft")
-if legitmenu == 1 then aim() end
-if legitmenu == 2 then recoil() end
-if legitmenu == 3 then radar() end
-if legitmenu == 4 then cfg() end
-if legitmenu == 5 then start() end
+local function tween(obj, t, props, style, dir)
+	local tw = TweenService:Create(
+		obj,
+		TweenInfo.new(t, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out),
+		props
+	)
+	tw:Play()
+	return tw
 end
 
-function rage() 
-ragemenu = gg. multiChoice({
-   "Fire Rate[Lobby]", 
-   "Inf Ammo", 
-   "WallShot", 
-   "Aim Menu", 
-   "NoRecoil Menu", 
-   "Don't Return Spawn", 
-   "Don't Block Move", 
-   "AntiFlash", 
-   "AntiSmoke", 
-   "ExpHack", 
-   "MoneyHack", 
-   "BuyHack", 
-   "DamageHack", 
-   "Disable Kill Animation", 
-   "Air Jump", 
-   "FastBomb", 
-   "FastPlant", 
-   "Plant Any Where", 
-   "Fov Menu", 
-   "Immunity Yo Grenade", 
-   "NoHud", 
-   "Friendly Fire[Visual]", 
-   "Respawn Hack", 
-   "SpeedHack", 
-   "BlackSky", 
-   "Back"
-},nil, "RedSoft Script") 
-if ragemenu[1] == true then Firerate() end
-if ragemenu[2] == true then Inf() end
-if ragemenu[3] == true then WallShot() end
-if ragemenu[4] == true then aim() end
-if ragemenu[5] == true then recoil() end
-if ragemenu[6] == true then DontSpawn() end
-if ragemenu[7] == true then DontReturn() end
-if ragemenu[8] == true then AntiFlash() end
-if ragemenu[9] == true then AntiSmoke() end
-if ragemenu[10] == true then ExpHack() end
-if ragemenu[11] == true then Money() end
-if ragemenu[12] == true then Buy() end
-if ragemenu[13] == true then Damage() end
-if ragemenu[14] == true then Disable() end
-if ragemenu[15] == true then Air() end
-if ragemenu[16] == true then Fastbomb() end
-if ragemenu[17] == true then FastPlant() end
-if ragemenu[18] == true then Plant() end
-if ragemenu[19] == true then Fov() end
-if ragemenu[20] == true then Imm() end
-if ragemenu[21] == true then Ff() end
-if ragemenu[22] == true then Respawn() end
-if ragemenu[23] == true then Speed() end
-if ragemenu[24] == true then BlackSky() end
-if ragemenu[25] == true then start() end
+local function apply(obj, props, animate, t)
+	if animate == false then
+		for k, v in pairs(props) do
+			obj[k] = v
+		end
+	else
+		tween(obj, t or 0.15, props)
+	end
 end
 
-function Firerate() 
-fr = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if fr  == 1 then  on1() end
-if fr  == 2 then off1()end
-if fr  == 3 then start() end
+local function corner(parent, r)
+	return create("UICorner", { CornerRadius = UDim.new(0, r), Parent = parent })
 end
 
-function Inf() 
-inf = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if inf  == 1 then  on2() end
-if inf  == 2 then off2() end
-if inf  == 3 then start() end
+local function stroke(parent, color, thickness, transparency)
+	return create("UIStroke", {
+		Color = color or Theme.Stroke,
+		Thickness = thickness or 1,
+		Transparency = transparency or 0,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		Parent = parent,
+	})
 end
 
-function WallShot() 
-ws = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if ws == 1 then  on3() end
-if ws == 2 then off3()end
-if ws == 3 then start() end
+local function label(parent, str, size, color, font, xalign)
+	return create("TextLabel", {
+		BackgroundTransparency = 1,
+		Text = str,
+		TextSize = size or 13,
+		TextColor3 = color or Theme.Text,
+		Font = font or FONT,
+		TextXAlignment = xalign or Enum.TextXAlignment.Left,
+		Parent = parent,
+	})
 end
 
-function DontSpawn() 
-ds = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if ds == 1 then  on4() end
-if fs== 2 then off4()end
-if ds == 3 then start() end
+local function isPointer(input)
+	return input.UserInputType == MOUSE1 or input.UserInputType == TOUCH
 end
 
-function DontReturn() 
-dr = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if dr == 1 then  on5() end
-if dr == 2 then off5()end
-if dr == 3 then start() end
+-- перетаскивание по элементу: callback(Vector3 позиция курсора)
+local function dragger(frame, callback)
+	frame.InputBegan:Connect(function(input)
+		if not isPointer(input) then
+			return
+		end
+		callback(input.Position)
+		local move = UserInputService.InputChanged:Connect(function(i)
+			if i.UserInputType == MOVE or i.UserInputType == TOUCH then
+				callback(i.Position)
+			end
+		end)
+		local finish
+		finish = UserInputService.InputEnded:Connect(function(i)
+			if i.UserInputType == input.UserInputType then
+				move:Disconnect()
+				finish:Disconnect()
+			end
+		end)
+	end)
 end
 
-function AntiSmoke() 
-as = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if as == 1 then  on6() end
-if as == 2 then off6()end
-if as == 3 then start() end
-end
-
-function AntiFlash() 
-af = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if af == 1 then  on7() end
-if af == 2 then off7()end
-if af == 3 then start() end
-end
-
-function ExpHack() 
-eh = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if eh == 1 then  on8() end
-if eh == 2 then off8()end
-if eh == 3 then start() end
-end
-
-function Money() 
-m = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if m == 1 then  on9() end
-if m == 2 then off9()end
-if m == 3 then start() end
-end
-
-function Damage() 
-d = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if d == 1 then  on10() end
-if d == 2 then off10()end
-if d == 3 then start() end
-end
-
-function Disable() 
-di = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if di == 1 then  on11() end
-if di == 2 then off11()end
-if di == 3 then start() end
-end
-
-function Air() 
-a = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if a == 1 then  on12() end
-if a == 2 then off12()end
-if a == 3 then start() end
-end
-
-function FastBomb() 
-fb = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if fb == 1 then  on13() end
-if fb == 2 then off13()end
-if fb == 3 then start() end
-end
-
-function FastPlant() 
-fp = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if fp == 1 then  on14() end
-if fp == 2 then off15()end
-if fp == 3 then start() end
-end
-
-function Plant() 
-p = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if p == 1 then  on16() end
-if p == 2 then off16()end
-if p == 3 then start() end
-end
-
-function Fov() 
-f = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if f == 1 then  on17() end
-if f == 2 then off17()end
-if f == 3 then start() end
-end
-
-function imm() 
-i = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if i == 1 then  on18() end
-if i == 2 then off18()end
-if i == 3 then start() end
-end
-
-function Ff() 
-ff = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if ff == 1 then  on19() end
-if ff == 2 then off19()end
-if ff == 3 then start() end
-end
-
-function Respawn() 
-r = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if r == 1 then  on20() end
-if r == 2 then off20()end
-if r == 3 then start() end
-end
-
-function Speed() 
-s = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if s == 1 then  on21() end
-if s == 2 then off21()end
-if s == 3 then start() end
-end
-
-function BlackSky() 
-bs = gg.choice({
-  "On", 
-  "Off", 
-  "Back", 
-},nil,"ʙʏ RedSoft")
-if bs == 1 then  on22() end
-if bs == 2 then off22()end
-if bs == 3 then start() end
-end
-
-function chams()
-chamsmenu = gg.multiChoice({
-    "Blue",
-	"Green",
-	"Rer",
-	"Rainbow"
-	"Back"
-}, nil , "𝐁𝐥𝐞𝐧𝐝𝐞𝐫𝐂𝐡𝐚𝐦𝐬")
-if chamsmenu[1] == true then Blue() end 
-if chamsmenu[2] == true then Green() end
-if chamsmenu[3] == true then Red() end
-if chamsmenu[4] == true then Rainbow() end
-if chamsmenu[5] == true then start() end
-end
-
-
-function aim()
-aimmenu = gg.choice({
-	    "SuperLegitAim",
-		"LegitAim",
-		"MediumAim ", 
-		"HardAim", 
-		"SkyAim ", 
-		"Off",
-		"Back"
-},nil,"ʙʏ RedSoft")
-if aimmenu == 1 then superlegit() end
-if aimmenu == 2 then legitt() end
-if aimmenu == 3 then Medium() end
-if aimmenu == 4 then Hard() end
-if aimmenu == 5 then Sky() end
-if aimmenu == 6 then offaim() end	
-if aimmenu == 7 then start() end	
-end
-
-function recoil()
-recoilmenu = gg.choice({
-		"25%",
-		"50%",
-		"75%",
-		"100%",
-		"0%",
-		"Back"
-},nil,"ʙʏ RedSoft")
-if recoilmenu == 1 then recoil25() end
-if recoilmenu == 2 then recoil50() end
-if recoilmenu == 3 then recoil75() end
-if recoilmenu == 4 then recoil100() end
-if recoilmenu == 5 then offrecoil() end
-if recoilmenu == 6 then start() end	
-end
-
-function radar()
-radarmenu = gg.choice({
-		"RadarHack On",
-		"RadarHack Off",
-		"Back"
-	},nil,"ʙʏ RedSoft")
-if radarmenu == 1 then radaron() end
-if radarmenu == 2 then radaroff() end
-if radarmenu == 3 then start() end	
+local function decimalsOf(step)
+	local frac = tostring(step):match("%.(%d+)")
+	return frac and #frac or 0
 end
 
 ---------------------------------------------------------------------
-
-
-------------------------[Функции]------------------------------------
-function superlegit() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-13429
-Var #B9C66204|b9c66204|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d66204
-Var #B9C67094|b9c67094|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d67094
-Var #B9C90938|b9c90938|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d90938
-Var #B9C90B14|b9c90b14|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d90b14
-Var #B9C91D84|b9c91d84|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d91d84
-Var #B9E8F390|b9e8f390|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|f8f390
-Var #C04179B0|c04179b0|4|3e19999a|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libunity.so|1f09b0
-
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("ꜱᴜᴘᴇʀʟᴇɢɪᴛ ᴀɪᴍ Activated")
-end
-
-function legitt() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-13429
-Var #B9C66204|b9c66204|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d66204
-Var #B9C67094|b9c67094|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d67094
-Var #B9C90938|b9c90938|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d90938
-Var #B9C90B14|b9c90b14|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d90b14
-Var #B9C91D84|b9c91d84|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d91d84
-Var #B9E8F390|b9e8f390|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|f8f390
-Var #C04179B0|c04179b0|4|3e3851ec|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libunity.so|1f09b0
-
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("ʟᴇɢɪᴛ ᴀɪᴍ Activated")
-end
-
-function Medium() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-13429
-Var #B9C66204|b9c66204|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d66204
-Var #B9C67094|b9c67094|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d67094
-Var #B9C90938|b9c90938|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d90938
-Var #B9C90B14|b9c90b14|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d90b14
-Var #B9C91D84|b9c91d84|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d91d84
-Var #B9E8F390|b9e8f390|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|f8f390
-Var #C04179B0|c04179b0|4|3ecccccd|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libunity.so|1f09b0
-
-
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("ꜱᴜᴘᴇʀʟᴇɢɪᴛ ᴀɪᴍ Activated")
-end
-
-function Hard() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-13429
-Var #B9C66204|b9c66204|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d66204
-Var #B9C67094|b9c67094|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d67094
-Var #B9C90938|b9c90938|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d90938
-Var #B9C90B14|b9c90b14|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d90b14
-Var #B9C91D84|b9c91d84|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d91d84
-Var #B9E8F390|b9e8f390|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|f8f390
-Var #C04179B0|c04179b0|4|3f4ccccd|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libunity.so|1f09b0
-
-
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("ʟᴇɢɪᴛ ᴀɪᴍ Activated")
-end
-
-function Sky() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-13429
-Var #B9C66204|b9c66204|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d66204
-Var #B9C67094|b9c67094|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d67094
-Var #B9C90938|b9c90938|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d90938
-Var #B9C90B14|b9c90b14|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d90b14
-Var #B9C91D84|b9c91d84|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d91d84
-Var #B9E8F390|b9e8f390|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|f8f390
-Var #C04179B0|c04179b0|4|41d80000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libunity.so|1f09b0
-
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("SkyAim Activated")
-end
-
-
-
-
-function offaim() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-13429
-Var #B9C66204|b9c66204|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d66204
-Var #B9C67094|b9c67094|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d67094
-Var #B9C90938|b9c90938|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d90938
-Var #B9C90B14|b9c90b14|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d90b14
-Var #B9C91D84|b9c91d84|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|d91d84
-Var #B9E8F390|b9e8f390|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libil2cpp.so|f8f390
-Var #C04179B0|c04179b0|4|3727c5ac|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-mTDZw4mUY0-Ltz1y8t9DJw==/lib/arm/libunity.so|1f09b0
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("ᴀɪᴍ DeActivated")
-end
-
-function recoil25() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #C1D54878|c1d54878|4|44070000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|27e878
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("ɴᴏʀᴇᴄᴏɪʟ Activated")
-end
-
-function recoil50() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #C1D54878|c1d54878|4|44340000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|27e878
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("ɴᴏʀᴇᴄᴏɪʟ Activated")
-end
-
-function recoil75() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #C1D54878|c1d54878|4|44610000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|27e878
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("ɴᴏʀᴇᴄᴏɪʟ Activated")
-end
-
-function recoil100() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #C1D54878|c1d54878|4|47c35000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|27e878
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("ɴᴏʀᴇᴄᴏɪʟ Activated")
-end
-
-function offrecoil() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #C1D54878|c1d54878|4|43b40000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|27e878
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("ɴᴏʀᴇᴄᴏɪʟ DeActivated")
-end
-
-function radaron() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1BC19D8|c1bc19d8|4|e3a00001|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|8c09d8
-Var #C1BC19DC|c1bc19dc|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|8c09dc
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("ʀᴀᴅᴀʀʜᴀᴄᴋ Activated")
-end
-
-function radaroff() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-1337
-Var #B6C6F0B0|b6c6f0b0|4|e92d4df0|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-behNqTjLlT0Cn0XHIPVYog==/lib/arm/libil2cpp.so|9ab658
-Var #B6C6F0B4|b6c6f0b4|4|e28db018|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-behNqTjLlT0Cn0XHIPVYog==/lib/arm/libil2cpp.so|9ab65c
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("ʀᴀᴅᴀʀʜᴀᴄᴋ DeActivated")
-end
-
-function on23() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C8AC7FEC|c8ac7fec|4|bf800000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|391fec
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("BlackSky Activated")
-end
-
-function on22() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #BB60957C|bb60957c|4|42a00000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e7857c
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("SpeedHack Activated")
-end
-
-function on21() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1B97A2C|c1b97a2c|4|e3a00001|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|896a2c
-Var #C1B97A30|c1b97a30|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|896a30
-Var #C2067204|c2067204|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d66204
-Var #C2068094|c2068094|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d67094
-Var #C2091938|c2091938|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d90938
-Var #C2091B14|c2091b14|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d90b14
-Var #C2092D84|c2092d84|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d91d84
-Var #C2290390|c2290390|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|f8f390
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("RespawnHack Activated")
-end
-
-function on20() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C216E904|c216e904|4|e3a00001|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e6d904
-Var #C216E908|c216e908|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e6d908
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Friendly Fire Activated")
-end
-
-function on19() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #BB2F6760|bb2f6760|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|b65760
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Immunity to Grenada Activated")
-end
-
-function on18() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #C1EC9DB8|c1ec9db8|4|438c0000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|3f3db8
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Fov Activated")
-end
-
-function on16() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C2127C00|c2127c00|4|e3a00001|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e26c00
-Var #C2127C04|c2127c04|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e26c04
-Var #C2127C58|c2127c58|4|e3a00001|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e26c58
-Var #C2127C5C|c2127c5c|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e26c5c
-Var #C2127CA0|c2127ca0|4|e3a00001|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e26ca0
-Var #C2127CA4|c2127ca4|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e26ca4
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Plant AnyWhere Activated")
-end
-
-function on15() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C2120178|c2120178|4|e3a00000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e1f178
-Var #C212017C|c212017c|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e1f17c
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("FastPlant Activated")
-end
-
-function on14() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C2124E94|c2124e94|4|e3400000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e23e94
-Var #C2124E98|c2124e98|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e23e98
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("FastBomb Activated")
-end
-
-function on13() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C38634E4|c38634e4|4|e3a00001|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|25624e4
-Var #C38634E8|c38634e8|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|25624e8
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("AirJump Activated")
-end
-
-function on12() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C2190EB4|c2190eb4|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e8feb4
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Disable Kill Animation Activated")
-end
-
-function on11() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1DEF4BC|c1def4bc|4|e3000d05|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee4bc
-Var #C1DEF4C0|c1def4c0|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee4c0
-Var #C1DEF4E4|c1def4e4|4|e3000d05|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee4e4
-Var #C1DEF4E8|c1def4e8|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee4e8
-Var #C1DEF50C|c1def50c|4|e3000d05|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee50c
-Var #C1DEF510|c1def510|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee510
-Var #C1DEF534|c1def534|4|e3000d05|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee534
-Var #C1DEF538|c1def538|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee538
-Var #C1DEF9B0|c1def9b0|4|e3000d05|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee9b0
-Var #C1DEF9B4|c1def9b4|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee9b4
-Var #C1DEF9E0|c1def9e0|4|e3000d05|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee9e0
-Var #C1DEF9E4|c1def9e4|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee9e4
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Damage Activated")
-end
-
-function on10() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1B93E80|c1b93e80|4|e3a00001|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|892e80
-Var #C1B93E84|c1b93e84|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|892e84
-Var #C1B94D74|c1b94d74|4|e3a00001|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|893d74
-Var #C1B94D78|c1b94d78|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|893d78
-Var #C1B98188|c1b98188|4|e3471f7f|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|897188
-Var #C1B9818C|c1b9818c|4|e1a00001|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|89718c
-Var #C1B98190|c1b98190|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|897190
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("BuyHack Activated")
-end
-
-function on9() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1BA84CC|c1ba84cc|4|e3a00000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|8a74cc
-Var #C1BA84D0|c1ba84d0|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|8a74d0
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("MoneyHack Activated")
-end
-
-function on8() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1BA92D0|c1ba92d0|4|e3a00dfa|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|8a82d0
-Var #C1BA92D4|c1ba92d4|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|8a82d4
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("ExpHack Activated")
-end
-
-function on7() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #C1F0F900|c1f0f900|4|0|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|439900
-Var #C1F0F904|c1f0f904|4|0|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|439904
-Var #C1F0F908|c1f0f908|4|0|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|439908
-Var #C1F0F90C|c1f0f90c|4|0|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|43990c
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("AntiSmoke Activated")
-end
-
-function on6() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #BB5C6848|bb5c6848|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e35848
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("AntiFlash Activated")
-end
-
-function on5() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C25A799C|c25a799c|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|12a699c
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Dont Block Move Activated")
-end
-
-function on4() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1BA67EC|c1ba67ec|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|8a57ec
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Dont Return Spawn Activated")
-end
-
-function on3() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #C24C34A8|c24c34a8|4|c7c34f80|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|9ed4a8
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("WallShot Activated")
-end
-
-function on2() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C230EE88|c230ee88|4|e3000d05|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|100de88
-Var #C230EE8C|c230ee8c|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|100de8c
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("infAmmo Activated")
-end
-
-function on1() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C8AC7FEC|c8ac7fec|4|3c23d70a|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|391fec
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("FireRate Activated")
-end
-
-function off22() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #BB60957C|bb60957c|4|17|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e7857c
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("BlackSky DeActivated")
-end
-
-function off21() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1B97A2C|c1b97a2c|4|e92d4830|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|896a2c
-Var #C1B97A30|c1b97a30|4|e28db008|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|896a30
-Var #C2067204|c2067204|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d66204
-Var #C2068094|c2068094|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d67094
-Var #C2091938|c2091938|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d90938
-Var #C2091B14|c2091b14|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d90b14
-Var #C2092D84|c2092d84|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d91d84
-Var #C2290390|c2290390|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|f8f390
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("SpeedHack DeActivated")
-end
-
-function off20() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1B97A2C|c1b97a2c|4|e92d4830|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|896a2c
-Var #C1B97A30|c1b97a30|4|e28db008|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|896a30
-Var #C2067204|c2067204|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d66204
-Var #C2068094|c2068094|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d67094
-Var #C2091938|c2091938|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d90938
-Var #C2091B14|c2091b14|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d90b14
-Var #C2092D84|c2092d84|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|d91d84
-Var #C2290390|c2290390|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|f8f390
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("RespawnHack DeActivated")
-end
-
-function off19() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C216E904|c216e904|4|e92d48f0|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e6d904
-Var #C216E908|c216e908|4|e28db010|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e6d908
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Friendly Fire DeActivated")
-end
-
-function off18() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #BB2F6760|bb2f6760|4|2d5674c|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|b65760
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Immunity to Grenada DeActivated")
-end
-
-function off17() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #C1EC9DB8|c1ec9db8|4|43b40000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|3f3db8
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Fov DeActivated")
-end
-
-function off16() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C2127C00|c2127c00|4|e92d4c70|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e26c00
-Var #C2127C04|c2127c04|4|e28db010|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e26c04
-Var #C2127C58|c2127c58|4|e92d48f0|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e26c58
-Var #C2127C5C|c2127c5c|4|e28db010|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e26c5c
-Var #C2127CA0|c2127ca0|4|e92d4830|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e26ca0
-Var #C2127CA4|c2127ca4|4|e28db008|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e26ca4
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Plant AnyWhere DeActivated")
-end
-
-function off15() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C2120178|c2120178|4|e92d4c10|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e1f178
-Var #C212017C|c212017c|4|e28db008|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e1f17c
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("FastPlant DeActivated")
-end
-
-function off14() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C2124E94|c2124e94|4|e92d4c70|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e23e94
-Var #C2124E98|c2124e98|4|e28db010|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e23e98
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("FastBomb DeActivated")
-end
-
-function off13() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C38634E4|c38634e4|4|e92d4c10|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|25624e4
-Var #C38634E8|c38634e8|4|e28db008|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|25624e8
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("AirJump DeActivated")
-end
-
-function off12() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C2190EB4|c2190eb4|4|e92d4ff0|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e8feb4
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Disable Kill Animation DeActivated")
-end
-
-function off11() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1DEF4BC|c1def4bc|4|e92d4c10|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee4bc
-Var #C1DEF4C0|c1def4c0|4|e28db008|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee4c0
-Var #C1DEF4E4|c1def4e4|4|e92d4c10|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee4e4
-Var #C1DEF4E8|c1def4e8|4|e28db008|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee4e8
-Var #C1DEF50C|c1def50c|4|e92d4c10|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee50c
-Var #C1DEF510|c1def510|4|e28db008|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee510
-Var #C1DEF534|c1def534|4|e92d4c10|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee534
-Var #C1DEF538|c1def538|4|e28db008|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee538
-Var #C1DEF9B0|c1def9b0|4|e92d4c10|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee9b0
-Var #C1DEF9B4|c1def9b4|4|e28db008|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee9b4
-Var #C1DEF9E0|c1def9e0|4|e92d4c10|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee9e0
-Var #C1DEF9E4|c1def9e4|4|e28db008|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|aee9e4
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Damage DeActivated")
-end
-
-function off10() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1B93E80|c1b93e80|4|e92d4c70|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|892e80
-Var #C1B93E84|c1b93e84|4|e28db010|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|892e84
-Var #C1B94D74|c1b94d74|4|e92d4c70|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|893d74
-Var #C1B94D78|c1b94d78|4|e28db010|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|893d78
-Var #C1B98188|c1b98188|4|e92d48f0|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|897188
-Var #C1B9818C|c1b9818c|4|e28db010|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|89718c
-Var #C1B98190|c1b98190|4|e59f508c|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|897190
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("BuyHack DeActivated")
-end
-
-function off9() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1BA84CC|c1ba84cc|4|e92d4c70|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|8a74cc
-Var #C1BA84D0|c1ba84d0|4|e28db010|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|8a74d0
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("MoneyHack DeActivated")
-end
-
-function off8() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1BA92D0|c1ba92d0|4|e92d4830|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|8a82d0
-Var #C1BA92D4|c1ba92d4|4|e28db008|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|8a82d4
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("ExpHack DeActivated")
-end
-
-function off7() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C8B6F900|c8b6f900|4|42c80000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|439900
-Var #C8B6F904|c8b6f904|4|42c80000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|439904
-Var #C8B6F908|c8b6f908|4|42c80000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|439908
-Var #C8B6F90C|c8b6f90c|4|42c80000|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|43990c
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("AntiSmoke DeActivated")
-end
-
-function off6() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #BB5C6848|bb5c6848|4|2f6d484|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|e35848
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("AntiFlash DeActivated")
-end
-
-function off5() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C25A799C|c25a799c|4|e12fff1e|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|12a699c
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Dont Block Move DeActivated")
-end
-
-function off4() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1BA67EC|c1ba67ec|4|e92d4c70|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|8a57ec
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("Dont Return Spawn DeActivated")
-end
-
-function off3() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-31928
-Var #C24C34A8|c24c34a8|4|3a83126f|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libunity.so|9ed4a8
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("WallShot DeActivated")
-end
-
-function off2() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C230EE88|c230ee88|4|e5901008|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|100de88
-Var #C230EE8C|c230ee8c|4|e590000c|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|100de8c
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("infAmmo DeActivated")
-end
-
-function off1() -- 0.19.1 p2
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[]]):close()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-17084
-Var #C1E71950|c1e71950|4|e92d4c10|0|0|0|0|r-xp|/data/app/com.axlebolt.standoff2-HQwPZOqOo19XnT4EN32eQQ==/lib/arm/libil2cpp.so|b70950
-
-]]):close()
-gg.loadList(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", gg.LOAD_VALUES)
-gg.clearList()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[
-fuck u xd
-]]):close()
-gg.toast("FireRate DeActivated")
-end
-
-function Blue()
-gg.clearResults()
-gg.setRanges(gg.REGIon_ANonYMOUS)
-gg.searchNumber("1073741894", gg.TYPE_DWORD)
-gg.refineNumber("1073741894", gg.TYPE_DWORD)
-gg.refineNumber("1073741894", gg.TYPE_DWORD)
-gg.refineNumber("1073741894", gg.TYPE_DWORD)
-gg.getResults(5000)
-gg.editAll('1073741899', gg.TYPE_DWORD)
-gg.toast("𝗯𝗹𝘂𝗲 𝗰𝗵𝗮𝗺𝘀 𝗮𝗰𝘁𝗶𝘃𝗮𝘁𝗲𝗱")
-gg.clearResults()
-end
-
-function Green()
-gg.clearResults()
-gg.setRanges(gg.REGIon_ANonYMOUS)
-gg.searchNumber("1073741893", gg.TYPE_DWORD)
-gg.refineNumber("1073741893", gg.TYPE_DWORD)
-gg.refineNumber("1073741893", gg.TYPE_DWORD)
-gg.refineNumber("1073741893", gg.TYPE_DWORD)
-gg.getResults(5000)
-gg.editAll('1073741904', gg.TYPE_DWORD)
-gg.toast("𝗴𝗿𝗲𝗲𝗻 𝗰𝗵𝗮𝗺𝘀 𝗮𝗰𝘁𝗶𝘃𝗮𝘁𝗲𝗱")
-gg.clearResults()
-end
-
-function Red()
-gg.clearResults()
-gg.setRanges(gg.REGIon_ANonYMOUS)
-gg.searchNumber("1073741892", gg.TYPE_DWORD)
-gg.refineNumber("1073741892", gg.TYPE_DWORD)
-gg.refineNumber("1073741892", gg.TYPE_DWORD)
-gg.refineNumber("1073741892", gg.TYPE_DWORD)
-gg.getResults(5000)
-gg.editAll('1073741899', gg.TYPE_DWORD)
-gg.toast("𝗿𝗲𝗱 𝗰𝗵𝗮𝗺𝘀 𝗮𝗰𝘁𝗶𝘃𝗮𝘁𝗲𝗱")
-gg.clearResults()
-end
-
-
-function Rainbow()
-gg.clearResults()
-gg.setRanges(gg.REGIon_ANonYMOUS)
-gg.searchNumber("1073741859", gg.TYPE_DWORD)
-gg.refineNumber("1073741859", gg.TYPE_DWORD)
-gg.refineNumber("1073741859", gg.TYPE_DWORD)
-gg.refineNumber("1073741859", gg.TYPE_DWORD)
-gg.getResults(5000)
-gg.editAll('1073741903', gg.TYPE_DWORD)
-gg.toast("𝗿𝗮𝗶𝗻𝗯𝗼𝘄 𝗰𝗵𝗮𝗺𝘀 𝗮𝗰𝘁𝗶𝘃𝗮𝘁𝗲𝗱")
-gg.clearResults()
-end
+-- классы
 ---------------------------------------------------------------------
-function cfg()
-cont = gg.makeRequest("https://pastebin.com/v0mFBgDR").content
-pcall(load(cont))
-end
-------------------------[Важное]------------------------------------
-function quit()
-io.open(gg.EXT_CACHE_DIR .. "/RedSoft.cfg", "w+"):write([[ɪꜰ ᴜ ᴡɪʟʟ ᴛʀʏ ᴛᴏ ꜱᴛᴇᴀʟ ʟᴏᴀᴅʟɪꜱᴛꜱ, ɪ ᴋɪʟʟ ᴜʀ ꜰᴀᴍɪʟʏ]]):close()
-gg.alert("ᴄʜᴇᴀᴛ ꜱᴛᴏᴘᴘᴇᴅ")
-gg.toast("T.ME/red_s0ft")
-os.exit() 
+local Library = {}
+Library.__index = Library
+
+local Tab = {}
+Tab.__index = Tab
+
+local Group = {}
+Group.__index = Group
+
+---------------------------------------------------------------------
+-- окно
+---------------------------------------------------------------------
+function Library.new(opts)
+	opts = opts or {}
+	local self = setmetatable({}, Library)
+
+	self.Accent = opts.Accent or Color3.fromRGB(3, 169, 244)
+	self.Flags = {}
+	self.Scale = opts.Scale or 1
+	self.ToggleKey = opts.ToggleKey or Enum.KeyCode.Insert
+	self.Visible = false
+	self._ready = false
+	self._tabs = {}
+	self._accentFns = {}
+	self._conns = {}
+	self._order = 0
+
+	local title = opts.Title or "NEVERLOSE"
+	local size = opts.Size or Vector2.new(780, 520)
+
+	-- куда класть GUI: opts.Parent (любой контейнер) или PlayerGui по умолчанию
+	local parent = opts.Parent or Players.LocalPlayer:WaitForChild("PlayerGui")
+
+	-- при повторном запуске скрипта убираем старое меню и блюр, чтобы не плодить копии
+	local old = parent:FindFirstChild("NeverloseUI")
+	if old then
+		old:Destroy()
+	end
+	local oldBlur = Lighting:FindFirstChild("NeverloseBlur")
+	if oldBlur then
+		oldBlur:Destroy()
+	end
+
+	self.Gui = create("ScreenGui", {
+		Name = "NeverloseUI",
+		ResetOnSpawn = false,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		DisplayOrder = 100,
+		Parent = parent,
+	})
+
+	-- Root компенсирует UIScale, чтобы занимать ровно весь экран
+	self.Root = create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1 / self.Scale, 1 / self.Scale),
+		Parent = self.Gui,
+	})
+	self.UIScale = create("UIScale", { Scale = self.Scale, Parent = self.Root })
+
+	-- главное окно
+	self.Main = create("CanvasGroup", {
+		Name = "Main",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(size.X, size.Y),
+		BackgroundColor3 = Theme.Window,
+		BorderSizePixel = 0,
+		GroupTransparency = 1,
+		Visible = false,
+		Parent = self.Root,
+	})
+	corner(self.Main, 10)
+	stroke(self.Main, Theme.Stroke, 1)
+	self.Pop = create("UIScale", { Scale = 0.94, Parent = self.Main })
+
+	-- верхняя панель (за неё таскаем окно)
+	local top = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 46),
+		BackgroundColor3 = Theme.Top,
+		BorderSizePixel = 0,
+		Parent = self.Main,
+	})
+	create("Frame", {
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.fromScale(0, 1),
+		Size = UDim2.new(1, 0, 0, 1),
+		BackgroundColor3 = Theme.Stroke,
+		BorderSizePixel = 0,
+		Parent = top,
+	})
+	local logo = label(top, title, 18, self.Accent, Enum.Font.GothamBlack)
+	logo.Position = UDim2.fromOffset(18, 0)
+	logo.Size = UDim2.new(0, 150, 1, 0)
+	self:_onAccent(function(c)
+		logo.TextColor3 = c
+	end)
+	local sub = label(top, opts.Subtitle or "", 12, Theme.SubText, FONT, Enum.TextXAlignment.Right)
+	sub.Position = UDim2.new(0, 180, 0, 0)
+	sub.Size = UDim2.new(1, -198, 1, 0)
+
+	top.InputBegan:Connect(function(input)
+		if not isPointer(input) then
+			return
+		end
+		local startMouse = input.Position
+		local startPos = self.Main.Position
+		local move = UserInputService.InputChanged:Connect(function(i)
+			if i.UserInputType == MOVE or i.UserInputType == TOUCH then
+				local d = (i.Position - startMouse) / self.Scale
+				self.Main.Position =
+					UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+			end
+		end)
+		local finish
+		finish = UserInputService.InputEnded:Connect(function(i)
+			if i.UserInputType == input.UserInputType then
+				move:Disconnect()
+				finish:Disconnect()
+			end
+		end)
+	end)
+
+	-- сайдбар и страницы
+	self.Sidebar = create("Frame", {
+		Position = UDim2.fromOffset(0, 46),
+		Size = UDim2.new(0, 176, 1, -46),
+		BackgroundColor3 = Theme.Sidebar,
+		BorderSizePixel = 0,
+		Parent = self.Main,
+	})
+	create("UIPadding", {
+		PaddingTop = UDim.new(0, 10),
+		PaddingLeft = UDim.new(0, 10),
+		PaddingRight = UDim.new(0, 10),
+		Parent = self.Sidebar,
+	})
+	create("UIListLayout", {
+		Padding = UDim.new(0, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Parent = self.Sidebar,
+	})
+	create("Frame", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.fromScale(1, 0),
+		Size = UDim2.new(0, 1, 1, 0),
+		BackgroundColor3 = Theme.Stroke,
+		BorderSizePixel = 0,
+		Parent = self.Sidebar,
+	})
+
+	self.Pages = create("Frame", {
+		Position = UDim2.fromOffset(176, 46),
+		Size = UDim2.new(1, -176, 1, -46),
+		BackgroundTransparency = 1,
+		Parent = self.Main,
+	})
+
+	-- оверлей для выпадающих списков / колорпикера
+	self.Overlay = create("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Visible = false,
+		ZIndex = 100,
+		Parent = self.Root,
+	})
+	local catcher = create("TextButton", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Text = "",
+		AutoButtonColor = false,
+		ZIndex = 1,
+		Parent = self.Overlay,
+	})
+	catcher.MouseButton1Click:Connect(function()
+		self:_closePopup()
+	end)
+
+	-- размытие фона (аналог GPU gaussian blur)
+	if opts.Blur ~= false then
+		self.BlurSize = opts.BlurSize or 12
+		self.Blur = create("BlurEffect", { Size = 0, Name = "NeverloseBlur", Parent = Lighting })
+	end
+
+	-- клавиша показа/скрытия
+	self:_connect(UserInputService.InputBegan, function(input, gp)
+		if not gp and self._ready and input.KeyCode == self.ToggleKey then
+			self:SetVisible(not self.Visible)
+		end
+	end)
+
+	-- стартовая анимация
+	if opts.Intro == false then
+		self._ready = true
+		self:SetVisible(true)
+	else
+		task.spawn(function()
+			local splash = create("TextLabel", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.5),
+				Size = UDim2.fromOffset(500, 70),
+				BackgroundTransparency = 1,
+				Text = title,
+				TextSize = 46,
+				Font = Enum.Font.GothamBlack,
+				TextColor3 = self.Accent,
+				TextTransparency = 1,
+				Parent = self.Root,
+			})
+			local line = create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.new(0.5, 0, 0.5, 36),
+				Size = UDim2.fromOffset(0, 2),
+				BackgroundColor3 = self.Accent,
+				BorderSizePixel = 0,
+				Parent = self.Root,
+			})
+			tween(splash, 0.5, { TextTransparency = 0 })
+			tween(line, 0.7, { Size = UDim2.fromOffset(190, 2) }, Enum.EasingStyle.Quart)
+			task.wait(1.1)
+			tween(splash, 0.35, { TextTransparency = 1 })
+			tween(line, 0.35, { BackgroundTransparency = 1 })
+			task.wait(0.4)
+			splash:Destroy()
+			line:Destroy()
+			self._ready = true
+			self:SetVisible(true)
+		end)
+	end
+
+	return self
 end
 
-function info()
-gg.alert("ᴄʀᴇᴅɪᴛꜱ:\n T.ME/red_s0ft")
+function Library:_connect(signal, fn)
+	local c = signal:Connect(fn)
+	table.insert(self._conns, c)
+	return c
 end
 
-while true do 
-	  menuend = 0
-	    if gg.isVisible(true) then
-	       gg.setVisible(false)
-	       menuend = 1
-	       if menuend == 1 then
-	           start()
-	           	end
+function Library:_next()
+	self._order += 1
+	return self._order
 end
+
+function Library:_onAccent(fn)
+	table.insert(self._accentFns, fn)
+	fn(self.Accent)
 end
+
+function Library:SetAccent(color)
+	self.Accent = color
+	for _, fn in ipairs(self._accentFns) do
+		fn(color)
+	end
+end
+
+function Library:SetScale(scale)
+	self.Scale = scale
+	self.UIScale.Scale = scale
+	self.Root.Size = UDim2.fromScale(1 / scale, 1 / scale)
+end
+
+function Library:SetVisible(v)
+	self.Visible = v
+	if v then
+		self.Main.Visible = true
+	end
+	tween(self.Main, 0.2, { GroupTransparency = v and 0 or 1 })
+	tween(self.Pop, 0.2, { Scale = v and 1 or 0.96 })
+	if self.Blur then
+		tween(self.Blur, 0.25, { Size = v and self.BlurSize or 0 })
+	end
+	if not v then
+		self:_closePopup()
+		task.delay(0.2, function()
+			if not self.Visible then
+				self.Main.Visible = false
+			end
+		end)
+	end
+end
+
+function Library:Destroy()
+	for _, c in ipairs(self._conns) do
+		c:Disconnect()
+	end
+	if self.Blur then
+		self.Blur:Destroy()
+	end
+	self.Gui:Destroy()
+end
+
+---------------------------------------------------------------------
+-- попапы
+---------------------------------------------------------------------
+function Library:_closePopup()
+	if self._popupFrame then
+		self._popupFrame:Destroy()
+		self._popupFrame = nil
+	end
+	self.Overlay.Visible = false
+end
+
+function Library:_popup(anchor, width, height, build)
+	self:_closePopup()
+	local pos = (anchor.AbsolutePosition - self.Root.AbsolutePosition) / self.Scale
+	local x, y = pos.X, pos.Y + anchor.AbsoluteSize.Y / self.Scale + 4
+	local rootSize = self.Root.AbsoluteSize / self.Scale
+	x = math.clamp(x, 4, math.max(4, rootSize.X - width - 4))
+	if y + height > rootSize.Y - 4 then
+		y = pos.Y - height - 4
+	end
+
+	local frame = create("Frame", {
+		Position = UDim2.fromOffset(x, y),
+		Size = UDim2.fromOffset(width, height),
+		BackgroundColor3 = Theme.Popup,
+		BackgroundTransparency = 0.04,
+		BorderSizePixel = 0,
+		Active = true,
+		ZIndex = 2,
+		Parent = self.Overlay,
+	})
+	corner(frame, 8)
+	stroke(frame, Theme.Stroke, 1)
+	-- мягкая тень из слоёв
+	for i = 1, 3 do
+		local sh = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.new(1, i * 6, 1, i * 6),
+			BackgroundColor3 = Color3.new(0, 0, 0),
+			BackgroundTransparency = 0.5 + i * 0.15,
+			BorderSizePixel = 0,
+			ZIndex = 1,
+			Parent = frame,
+		})
+		corner(sh, 8 + i * 3)
+	end
+	self._popupFrame = frame
+	self.Overlay.Visible = true
+	build(frame)
+	return frame
+end
+
+---------------------------------------------------------------------
+-- вкладки
+---------------------------------------------------------------------
+function Library:Section(name)
+	local l = label(self.Sidebar, string.upper(name), 10, Theme.SubText, FONT_BOLD)
+	l.Size = UDim2.new(1, 0, 0, 22)
+	l.LayoutOrder = self:_next()
+	return l
+end
+
+function Library:Tab(name, icon)
+	local lib = self
+	local tab = setmetatable({ Lib = lib, Name = name, _active = false }, Tab)
+
+	local btn = create("TextButton", {
+		Size = UDim2.new(1, 0, 0, 34),
+		BackgroundColor3 = Theme.Item,
+		BackgroundTransparency = 1,
+		Text = "",
+		AutoButtonColor = false,
+		LayoutOrder = lib:_next(),
+		Parent = lib.Sidebar,
+	})
+	corner(btn, 6)
+	local bar = create("Frame", {
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.fromScale(0, 0.5),
+		Size = UDim2.fromOffset(3, 16),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Parent = btn,
+	})
+	corner(bar, 2)
+
+	local iconObj
+	if icon and icon:sub(1, 6) == "rbxass" then
+		iconObj = create("ImageLabel", {
+			BackgroundTransparency = 1,
+			Image = icon,
+			Position = UDim2.fromOffset(12, 8),
+			Size = UDim2.fromOffset(18, 18),
+			Parent = btn,
+		})
+	else
+		iconObj = label(btn, icon or "•", 15, Theme.SubText, FONT_BOLD, Enum.TextXAlignment.Center)
+		iconObj.Position = UDim2.fromOffset(10, 0)
+		iconObj.Size = UDim2.new(0, 22, 1, 0)
+	end
+	local text = label(btn, name, 13, Theme.SubText)
+	text.Position = UDim2.fromOffset(40, 0)
+	text.Size = UDim2.new(1, -44, 1, 0)
+
+	function tab:_style(animate)
+		local on = self._active
+		local c = on and lib.Accent or Theme.SubText
+		apply(btn, { BackgroundTransparency = on and 0.35 or 1 }, animate)
+		apply(bar, { BackgroundTransparency = on and 0 or 1, BackgroundColor3 = lib.Accent }, animate)
+		apply(text, { TextColor3 = on and Theme.Text or Theme.SubText }, animate)
+		if iconObj:IsA("TextLabel") then
+			apply(iconObj, { TextColor3 = c }, animate)
+		else
+			apply(iconObj, { ImageColor3 = c }, animate)
+		end
+	end
+	lib:_onAccent(function()
+		tab:_style(false)
+	end)
+
+	-- страница с двумя колонками
+	local page = create("ScrollingFrame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = Theme.Stroke,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		Visible = false,
+		Parent = lib.Pages,
+	})
+	create("UIPadding", {
+		PaddingTop = UDim.new(0, 12),
+		PaddingBottom = UDim.new(0, 12),
+		PaddingLeft = UDim.new(0, 12),
+		PaddingRight = UDim.new(0, 12),
+		Parent = page,
+	})
+	local function column(pos)
+		local col = create("Frame", {
+			Position = pos,
+			Size = UDim2.new(0.5, -6, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			BackgroundTransparency = 1,
+			Parent = page,
+		})
+		create("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = col })
+		return col
+	end
+	tab.Page = page
+	tab._left = column(UDim2.new(0, 0, 0, 0))
+	tab._right = column(UDim2.new(0.5, 6, 0, 0))
+
+	btn.MouseButton1Click:Connect(function()
+		lib:_select(tab)
+	end)
+	btn.MouseEnter:Connect(function()
+		if not tab._active then
+			tween(btn, 0.12, { BackgroundTransparency = 0.7 })
+		end
+	end)
+	btn.MouseLeave:Connect(function()
+		if not tab._active then
+			tween(btn, 0.12, { BackgroundTransparency = 1 })
+		end
+	end)
+
+	table.insert(lib._tabs, tab)
+	if #lib._tabs == 1 then
+		lib:_select(tab)
+	end
+	return tab
+end
+
+function Library:_select(tab)
+	self:_closePopup()
+	for _, t in ipairs(self._tabs) do
+		t._active = (t == tab)
+		t.Page.Visible = t._active
+		t:_style()
+	end
+end
+
+function Tab:Group(name, side)
+	local lib = self.Lib
+	local col = (side == "right") and self._right or self._left
+	local g = setmetatable({ Lib = lib, _order = 0 }, Group)
+
+	g.Frame = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundColor3 = Theme.Group,
+		BorderSizePixel = 0,
+		LayoutOrder = #col:GetChildren(),
+		Parent = col,
+	})
+	corner(g.Frame, 8)
+	stroke(g.Frame, Theme.Stroke, 1)
+	create("UIPadding", {
+		PaddingTop = UDim.new(0, 10),
+		PaddingBottom = UDim.new(0, 10),
+		PaddingLeft = UDim.new(0, 12),
+		PaddingRight = UDim.new(0, 12),
+		Parent = g.Frame,
+	})
+	create("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = g.Frame })
+
+	local title = label(g.Frame, name, 13, Theme.Text, FONT_BOLD)
+	title.Size = UDim2.new(1, 0, 0, 18)
+	title.LayoutOrder = 0
+	return g
+end
+
+---------------------------------------------------------------------
+-- компоненты
+---------------------------------------------------------------------
+function Group:_row(height)
+	self._order += 1
+	return create("Frame", {
+		Size = UDim2.new(1, 0, 0, height),
+		BackgroundTransparency = 1,
+		LayoutOrder = self._order,
+		Parent = self.Frame,
+	})
+end
+
+local function fire(lib, flag, value, cb)
+	if flag then
+		lib.Flags[flag] = value
+	end
+	if cb then
+		task.spawn(cb, value)
+	end
+end
+
+function Group:Label(text)
+	local r = self:_row(18)
+	local l = label(r, text, 12, Theme.SubText)
+	l.Size = UDim2.fromScale(1, 1)
+	return l
+end
+
+function Group:Button(o)
+	local r = self:_row(28)
+	local b = create("TextButton", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Theme.Item,
+		Text = o.Name or "Button",
+		TextColor3 = Theme.Text,
+		TextSize = 13,
+		Font = FONT,
+		AutoButtonColor = false,
+		Parent = r,
+	})
+	corner(b, 6)
+	b.MouseEnter:Connect(function()
+		tween(b, 0.12, { BackgroundColor3 = Theme.Stroke })
+	end)
+	b.MouseLeave:Connect(function()
+		tween(b, 0.12, { BackgroundColor3 = Theme.Item })
+	end)
+	b.MouseButton1Click:Connect(function()
+		if o.Callback then
+			task.spawn(o.Callback)
+		end
+	end)
+	return b
+end
+
+-- Toggle: { Name, Flag, Default, Callback }
+function Group:Toggle(o)
+	local lib = self.Lib
+	local r = self:_row(26)
+	local l = label(r, o.Name or "Toggle", 13)
+	l.Size = UDim2.new(1, -50, 1, 0)
+
+	local pill = create("TextButton", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.fromScale(1, 0.5),
+		Size = UDim2.fromOffset(34, 18),
+		BackgroundColor3 = Theme.Item,
+		Text = "",
+		AutoButtonColor = false,
+		Parent = r,
+	})
+	corner(pill, 9)
+	local knob = create("Frame", {
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 3, 0.5, 0),
+		Size = UDim2.fromOffset(12, 12),
+		BackgroundColor3 = Theme.SubText,
+		BorderSizePixel = 0,
+		Parent = pill,
+	})
+	corner(knob, 6)
+
+	local api = {}
+	local state = o.Default == true
+	local function render(animate)
+		apply(pill, { BackgroundColor3 = state and lib.Accent or Theme.Item }, animate)
+		apply(knob, {
+			Position = state and UDim2.new(1, -15, 0.5, 0) or UDim2.new(0, 3, 0.5, 0),
+			BackgroundColor3 = state and Color3.new(1, 1, 1) or Theme.SubText,
+		}, animate)
+	end
+	lib:_onAccent(function()
+		render(false)
+	end)
+
+	function api:Set(v, silent)
+		state = v and true or false
+		render(true)
+		if silent then
+			if o.Flag then
+				lib.Flags[o.Flag] = state
+			end
+		else
+			fire(lib, o.Flag, state, o.Callback)
+		end
+	end
+	function api:Get()
+		return state
+	end
+
+	pill.MouseButton1Click:Connect(function()
+		api:Set(not state)
+	end)
+	if o.Flag then
+		lib.Flags[o.Flag] = state
+	end
+	return api
+end
+
+-- Slider: { Name, Min, Max, Default, Step, Suffix, Flag, Callback }  (Step=1 → int, 0.1 → float)
+function Group:Slider(o)
+	local lib = self.Lib
+	local min, max = o.Min or 0, o.Max or 100
+	local step = o.Step or 1
+	local dec = decimalsOf(step)
+	local suffix = o.Suffix or ""
+
+	local r = self:_row(40)
+	local l = label(r, o.Name or "Slider", 13)
+	l.Size = UDim2.new(1, -70, 0, 18)
+
+	local box = create("TextBox", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.fromScale(1, 0),
+		Size = UDim2.fromOffset(64, 18),
+		BackgroundTransparency = 1,
+		TextColor3 = Theme.SubText,
+		TextSize = 12,
+		Font = FONT,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		ClearTextOnFocus = false,
+		Text = "",
+		Parent = r,
+	})
+
+	local hit = create("Frame", {
+		Position = UDim2.fromOffset(0, 22),
+		Size = UDim2.new(1, 0, 0, 16),
+		BackgroundTransparency = 1,
+		Parent = r,
+	})
+	local bar = create("Frame", {
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.fromScale(0, 0.5),
+		Size = UDim2.new(1, 0, 0, 4),
+		BackgroundColor3 = Theme.Item,
+		BorderSizePixel = 0,
+		Parent = hit,
+	})
+	corner(bar, 2)
+	local fill = create("Frame", {
+		Size = UDim2.fromScale(0, 1),
+		BackgroundColor3 = lib.Accent,
+		BorderSizePixel = 0,
+		Parent = bar,
+	})
+	corner(fill, 2)
+	local knob = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0, 0.5),
+		Size = UDim2.fromOffset(10, 10),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+		Parent = bar,
+	})
+	corner(knob, 5)
+	lib:_onAccent(function(c)
+		fill.BackgroundColor3 = c
+	end)
+
+	local value = o.Default or min
+	local api = {}
+
+	local function snap(v)
+		v = math.clamp(v, min, max)
+		v = math.floor((v - min) / step + 0.5) * step + min
+		return tonumber(string.format("%." .. dec .. "f", math.clamp(v, min, max)))
+	end
+	local function render()
+		local ratio = (max == min) and 0 or (value - min) / (max - min)
+		tween(fill, 0.08, { Size = UDim2.fromScale(ratio, 1) })
+		tween(knob, 0.08, { Position = UDim2.fromScale(ratio, 0.5) })
+		box.Text = string.format("%." .. dec .. "f", value) .. suffix
+	end
+
+	function api:Set(v, silent)
+		v = snap(v)
+		local changed = v ~= value
+		value = v
+		render()
+		if silent then
+			if o.Flag then
+				lib.Flags[o.Flag] = value
+			end
+		elseif changed then
+			fire(lib, o.Flag, value, o.Callback)
+		end
+	end
+	function api:Get()
+		return value
+	end
+
+	dragger(hit, function(pos)
+		local ratio = math.clamp((pos.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+		api:Set(min + ratio * (max - min))
+	end)
+	box.Focused:Connect(function()
+		box.Text = string.format("%." .. dec .. "f", value)
+		box.TextColor3 = Theme.Text
+	end)
+	box.FocusLost:Connect(function()
+		box.TextColor3 = Theme.SubText
+		local n = tonumber(box.Text:match("-?%d+%.?%d*"))
+		if n then
+			api:Set(n)
+		else
+			render()
+		end
+	end)
+
+	value = snap(value)
+	render()
+	if o.Flag then
+		lib.Flags[o.Flag] = value
+	end
+	return api
+end
+
+-- Combo: { Name, Items = {..}, Default, Multi, Flag, Callback }
+-- Single → строка, Multi → таблица { [item] = true }
+function Group:Combo(o)
+	local lib = self.Lib
+	local items = o.Items or {}
+	local multi = o.Multi == true
+
+	local r = self:_row(26)
+	local l = label(r, o.Name or "Combo", 13)
+	l.Size = UDim2.new(1, -140, 1, 0)
+
+	local btn = create("TextButton", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.fromScale(1, 0.5),
+		Size = UDim2.fromOffset(130, 22),
+		BackgroundColor3 = Theme.Item,
+		Text = "",
+		AutoButtonColor = false,
+		Parent = r,
+	})
+	corner(btn, 5)
+	local shown = label(btn, "", 12, Theme.Text)
+	shown.Position = UDim2.fromOffset(8, 0)
+	shown.Size = UDim2.new(1, -24, 1, 0)
+	shown.TextTruncate = Enum.TextTruncate.AtEnd
+	local arrow = label(btn, "▾", 12, Theme.SubText, FONT_BOLD, Enum.TextXAlignment.Center)
+	arrow.AnchorPoint = Vector2.new(1, 0)
+	arrow.Position = UDim2.fromScale(1, 0)
+	arrow.Size = UDim2.new(0, 20, 1, 0)
+
+	local value
+	if multi then
+		value = {}
+		for _, k in ipairs(o.Default or {}) do
+			value[k] = true
+		end
+	else
+		value = o.Default or items[1]
+	end
+
+	local function display()
+		if multi then
+			local t = {}
+			for _, it in ipairs(items) do
+				if value[it] then
+					table.insert(t, it)
+				end
+			end
+			shown.Text = #t > 0 and table.concat(t, ", ") or "None"
+		else
+			shown.Text = tostring(value)
+		end
+	end
+	display()
+
+	local api = {}
+	function api:Get()
+		return value
+	end
+	function api:Set(v, silent)
+		value = v
+		display()
+		if not silent then
+			fire(lib, o.Flag, value, o.Callback)
+		elseif o.Flag then
+			lib.Flags[o.Flag] = value
+		end
+	end
+
+	btn.MouseButton1Click:Connect(function()
+		local h = math.min(#items * 26 + 10, 182)
+		lib:_popup(btn, btn.AbsoluteSize.X / lib.Scale, h, function(frame)
+			local sc = create("ScrollingFrame", {
+				Size = UDim2.new(1, -8, 1, -8),
+				Position = UDim2.fromOffset(4, 4),
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				ScrollBarThickness = 2,
+				CanvasSize = UDim2.new(),
+				AutomaticCanvasSize = Enum.AutomaticSize.Y,
+				ZIndex = 3,
+				Parent = frame,
+			})
+			create("UIListLayout", { Padding = UDim.new(0, 2), Parent = sc })
+			local buttons = {}
+			local function paint()
+				for it, b in pairs(buttons) do
+					local sel = multi and value[it] or (not multi and value == it)
+					b.TextColor3 = sel and lib.Accent or Theme.Text
+					b.BackgroundTransparency = sel and 0.6 or 1
+				end
+			end
+			for _, it in ipairs(items) do
+				local b = create("TextButton", {
+					Size = UDim2.new(1, -4, 0, 24),
+					BackgroundColor3 = Theme.Item,
+					BackgroundTransparency = 1,
+					Text = "  " .. it,
+					TextXAlignment = Enum.TextXAlignment.Left,
+					TextSize = 12,
+					Font = FONT,
+					AutoButtonColor = false,
+					ZIndex = 3,
+					Parent = sc,
+				})
+				corner(b, 5)
+				buttons[it] = b
+				b.MouseButton1Click:Connect(function()
+					if multi then
+						local nv = table.clone(value)
+						nv[it] = (not nv[it]) or nil
+						api:Set(nv)
+						paint()
+					else
+						api:Set(it)
+						lib:_closePopup()
+					end
+				end)
+			end
+			paint()
+		end)
+	end)
+
+	if o.Flag then
+		lib.Flags[o.Flag] = value
+	end
+	return api
+end
+
+-- Keybind: { Name, Default = Enum.KeyCode, Flag, Callback(key), OnPress() }
+function Group:Keybind(o)
+	local lib = self.Lib
+	local r = self:_row(26)
+	local l = label(r, o.Name or "Keybind", 13)
+	l.Size = UDim2.new(1, -80, 1, 0)
+	local btn = create("TextButton", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.fromScale(1, 0.5),
+		Size = UDim2.fromOffset(72, 22),
+		BackgroundColor3 = Theme.Item,
+		TextColor3 = Theme.Text,
+		TextSize = 12,
+		Font = FONT,
+		AutoButtonColor = false,
+		Text = "",
+		Parent = r,
+	})
+	corner(btn, 5)
+
+	local key = o.Default
+	local listening = false
+	local api = {}
+	local function show()
+		btn.Text = listening and "..." or (key and key.Name or "None")
+	end
+	show()
+	function api:Get()
+		return key
+	end
+
+	btn.MouseButton1Click:Connect(function()
+		listening = true
+		show()
+	end)
+	lib:_connect(UserInputService.InputBegan, function(input, gp)
+		if listening then
+			if input.UserInputType == Enum.UserInputType.Keyboard then
+				listening = false
+				key = (input.KeyCode ~= Enum.KeyCode.Escape) and input.KeyCode or nil
+				show()
+				fire(lib, o.Flag, key, o.Callback)
+			end
+			return
+		end
+		if key and not gp and input.KeyCode == key and o.OnPress then
+			task.spawn(o.OnPress)
+		end
+	end)
+	if o.Flag then
+		lib.Flags[o.Flag] = key
+	end
+	return api
+end
+
+-- ColorPicker: { Name, Default = Color3, Alpha = 0..1, Flag, Callback(color, alpha) }
+function Group:ColorPicker(o)
+	local lib = self.Lib
+	local r = self:_row(26)
+	local l = label(r, o.Name or "Color", 13)
+	l.Size = UDim2.new(1, -50, 1, 0)
+
+	local swatch = create("TextButton", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.fromScale(1, 0.5),
+		Size = UDim2.fromOffset(30, 16),
+		Text = "",
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+		Parent = r,
+	})
+	corner(swatch, 5)
+	stroke(swatch, Theme.Stroke, 1)
+
+	local h, s, v = Color3.toHSV(o.Default or Color3.new(1, 0, 0))
+	local a = o.Alpha or 1
+	local ui = {}
+	local api = {}
+
+	local function color()
+		return Color3.fromHSV(h, s, v)
+	end
+	local function refresh(silent)
+		local c = color()
+		swatch.BackgroundColor3 = c
+		swatch.BackgroundTransparency = 1 - a
+		if ui.sv then
+			ui.sv.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
+			ui.cursor.Position = UDim2.fromScale(s, 1 - v)
+			ui.hueKnob.Position = UDim2.fromScale(h, 0.5)
+			ui.alphaBar.BackgroundColor3 = c
+			ui.alphaKnob.Position = UDim2.fromScale(a, 0.5)
+			ui.hex.Text = "#" .. c:ToHex():upper() .. string.format("   α %d%%", math.floor(a * 100 + 0.5))
+		end
+		if lib.Flags and o.Flag then
+			lib.Flags[o.Flag] = { Color = c, Alpha = a }
+		end
+		if not silent and o.Callback then
+			task.spawn(o.Callback, c, a)
+		end
+	end
+	function api:Get()
+		return color(), a
+	end
+	function api:Set(c, alpha)
+		h, s, v = Color3.toHSV(c)
+		a = alpha or a
+		refresh()
+	end
+
+	swatch.MouseButton1Click:Connect(function()
+		lib:_popup(swatch, 200, 214, function(frame)
+			local sv = create("Frame", {
+				Position = UDim2.fromOffset(10, 10),
+				Size = UDim2.fromOffset(180, 130),
+				BackgroundColor3 = Color3.fromHSV(h, 1, 1),
+				BorderSizePixel = 0,
+				ZIndex = 3,
+				Parent = frame,
+			})
+			corner(sv, 6)
+			local white = create("Frame", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundColor3 = Color3.new(1, 1, 1),
+				BorderSizePixel = 0,
+				ZIndex = 3,
+				Parent = sv,
+			})
+			corner(white, 6)
+			create("UIGradient", { Transparency = NumberSequence.new(0, 1), Parent = white })
+			local black = create("Frame", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundColor3 = Color3.new(0, 0, 0),
+				BorderSizePixel = 0,
+				ZIndex = 4,
+				Parent = sv,
+			})
+			corner(black, 6)
+			create("UIGradient", { Rotation = 90, Transparency = NumberSequence.new(1, 0), Parent = black })
+			local cursor = create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Size = UDim2.fromOffset(10, 10),
+				BackgroundTransparency = 1,
+				ZIndex = 5,
+				Parent = sv,
+			})
+			corner(cursor, 5)
+			stroke(cursor, Color3.new(1, 1, 1), 2)
+
+			local hueBar = create("Frame", {
+				Position = UDim2.fromOffset(10, 150),
+				Size = UDim2.fromOffset(180, 10),
+				BackgroundColor3 = Color3.new(1, 1, 1),
+				BorderSizePixel = 0,
+				ZIndex = 3,
+				Parent = frame,
+			})
+			corner(hueBar, 5)
+			create("UIGradient", {
+				Color = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromHSV(0, 1, 1)),
+					ColorSequenceKeypoint.new(1 / 6, Color3.fromHSV(1 / 6, 1, 1)),
+					ColorSequenceKeypoint.new(2 / 6, Color3.fromHSV(2 / 6, 1, 1)),
+					ColorSequenceKeypoint.new(3 / 6, Color3.fromHSV(3 / 6, 1, 1)),
+					ColorSequenceKeypoint.new(4 / 6, Color3.fromHSV(4 / 6, 1, 1)),
+					ColorSequenceKeypoint.new(5 / 6, Color3.fromHSV(5 / 6, 1, 1)),
+					ColorSequenceKeypoint.new(1, Color3.fromHSV(0, 1, 1)),
+				}),
+				Parent = hueBar,
+			})
+			local hueKnob = create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Size = UDim2.fromOffset(6, 14),
+				BackgroundColor3 = Color3.new(1, 1, 1),
+				BorderSizePixel = 0,
+				ZIndex = 5,
+				Parent = hueBar,
+			})
+			corner(hueKnob, 3)
+			stroke(hueKnob, Color3.new(0, 0, 0), 1, 0.5)
+
+			local alphaBack = create("Frame", {
+				Position = UDim2.fromOffset(10, 168),
+				Size = UDim2.fromOffset(180, 10),
+				BackgroundColor3 = Color3.fromRGB(70, 78, 88),
+				BorderSizePixel = 0,
+				ZIndex = 3,
+				Parent = frame,
+			})
+			corner(alphaBack, 5)
+			local alphaBar = create("Frame", {
+				Size = UDim2.fromScale(1, 1),
+				BackgroundColor3 = color(),
+				BorderSizePixel = 0,
+				ZIndex = 4,
+				Parent = alphaBack,
+			})
+			corner(alphaBar, 5)
+			create("UIGradient", { Transparency = NumberSequence.new(1, 0), Parent = alphaBar })
+			local alphaKnob = create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Size = UDim2.fromOffset(6, 14),
+				BackgroundColor3 = Color3.new(1, 1, 1),
+				BorderSizePixel = 0,
+				ZIndex = 5,
+				Parent = alphaBack,
+			})
+			corner(alphaKnob, 3)
+			stroke(alphaKnob, Color3.new(0, 0, 0), 1, 0.5)
+
+			local hex = label(frame, "", 12, Theme.SubText, FONT, Enum.TextXAlignment.Center)
+			hex.Position = UDim2.fromOffset(10, 186)
+			hex.Size = UDim2.fromOffset(180, 20)
+			hex.ZIndex = 3
+
+			ui = {
+				sv = sv,
+				cursor = cursor,
+				hueKnob = hueKnob,
+				alphaBar = alphaBar,
+				alphaKnob = alphaKnob,
+				hex = hex,
+			}
+
+			dragger(sv, function(pos)
+				s = math.clamp((pos.X - sv.AbsolutePosition.X) / sv.AbsoluteSize.X, 0, 1)
+				v = 1 - math.clamp((pos.Y - sv.AbsolutePosition.Y) / sv.AbsoluteSize.Y, 0, 1)
+				refresh()
+			end)
+			dragger(hueBar, function(pos)
+				h = math.clamp((pos.X - hueBar.AbsolutePosition.X) / hueBar.AbsoluteSize.X, 0, 0.999)
+				refresh()
+			end)
+			dragger(alphaBack, function(pos)
+				a = math.clamp((pos.X - alphaBack.AbsolutePosition.X) / alphaBack.AbsoluteSize.X, 0, 1)
+				refresh()
+			end)
+			refresh(true)
+		end)
+	end)
+
+	refresh(true)
+	return api
+end
+
+return Library
