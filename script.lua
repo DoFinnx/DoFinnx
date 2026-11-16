@@ -1405,7 +1405,8 @@ end
 function Library:_openSettings(anchor)
 	local lib = self
 	self:_popup(anchor, 250, 232, function(frame)
-		local lp = Players.LocalPlayer -- ВОЗВРАЩАЕМ ПЕРЕМЕННУЮ
+		-- ВОЗВРАЩАЕМ ПЕРЕМЕННУЮ lp
+		local lp = Players.LocalPlayer
 		
 		local av = create("ImageLabel", {
 			Position = UDim2.fromOffset(12, 12),
@@ -1554,6 +1555,7 @@ function Library:_openSettings(anchor)
 		end)
 	end, { above = true })
 end
+
 ---------------------------------------------------------------------
 -- поиск по элементам
 ---------------------------------------------------------------------
