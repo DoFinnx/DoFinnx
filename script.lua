@@ -15,19 +15,26 @@ local Lighting = game:GetService("Lighting")
 local HttpService = game:GetService("HttpService")
 
 local Theme = {
-	Window = Color3.fromRGB(13, 16, 23),
-	Sidebar = Color3.fromRGB(12, 15, 21),
-	Card = Color3.fromRGB(17, 21, 29),
-	Box = Color3.fromRGB(25, 29, 40),
-	Active = Color3.fromRGB(31, 36, 48),
-	Stroke = Color3.fromRGB(32, 38, 51),
-	Divider = Color3.fromRGB(27, 32, 43),
-	Popup = Color3.fromRGB(15, 18, 26),
-	Text = Color3.fromRGB(226, 230, 240),
-	SubText = Color3.fromRGB(128, 137, 154),
-	Off = Color3.fromRGB(52, 57, 69),
-	OffKnob = Color3.fromRGB(122, 128, 142),
+	-- токены из DESIGN.md (Neverlose-last)
+	Window = Color3.fromHex("0D0F16"), -- shell
+	Sidebar = Color3.fromHex("12151E"),
+	Toolbar = Color3.fromHex("0B0D14"),
+	Card = Color3.fromHex("11131B"),
+	Box = Color3.fromHex("181B25"), -- control
+	Active = Color3.fromHex("272B36"), -- selected
+	Stroke = Color3.fromHex("20232E"), -- border
+	Divider = Color3.fromHex("20232E"),
+	Popup = Color3.fromHex("0D0F16"),
+	Text = Color3.fromHex("D9DBE2"),
+	SubText = Color3.fromHex("9296A2"), -- text-muted
+	Faint = Color3.fromHex("5E6370"), -- text-faint
+	Off = Color3.fromHex("20242F"),
+	OffKnob = Color3.fromHex("84909C"), -- toggle-off
+	AccentBright = Color3.fromHex("66A4FF"),
+	Chip = Color3.fromHex("73D6D2"), -- style-chip
 }
+
+local DEFAULT_ACCENT = Color3.fromHex("4E83FF")
 
 local FONT = Enum.Font.GothamMedium
 local FONT_BOLD = Enum.Font.GothamBold
@@ -252,6 +259,10 @@ Icons.dots = function(p)
 	part(p, 9, 9, 3, 3, { round = true })
 	part(p, 13.5, 9, 3, 3, { round = true })
 end
+Icons.check = function(p)
+	part(p, 6, 10.5, 5, 1.8, { rot = 45 })
+	part(p, 11, 9, 9, 1.8, { rot = -50 })
+end
 Icons.chevdown = function(p)
 	part(p, 6.5, 9, 7, 1.8, { rot = 45 })
 	part(p, 11.5, 9, 7, 1.8, { rot = -45 })
@@ -319,7 +330,8 @@ function Library.new(opts)
 	opts = opts or {}
 	local self = setmetatable({}, Library)
 
-	self.Accent = opts.Accent or Color3.fromRGB(72, 108, 247)
+	self.Accent = opts.Accent or DEFAULT_ACCENT
+	self._opts = opts
 	self.Flags = {}
 	self.ToggleKey = opts.ToggleKey or Enum.KeyCode.Insert
 	self.Visible = false
@@ -335,7 +347,7 @@ function Library.new(opts)
 	self._cfgFile = opts.ConfigFile or "NeverloseUI_presets.json"
 
 	local title = opts.Title or "NEVERLOSE"
-	local size = opts.Size or Vector2.new(750, 580)
+	local size = opts.Size or Vector2.new(748, 576)
 	self.Size = size
 
 	-- подгоняем масштаб под экран, чтобы окно не вылезало
@@ -379,7 +391,7 @@ function Library.new(opts)
 		BackgroundTransparency = 1,
 		Parent = self.Root,
 	})
-	self.Pop = create("UIScale", { Scale = 0.95, Parent = self.Holder })
+	self.Pop = create("UIScale", { Scale = 0.92, Parent = self.Holder })
 	for i = 1, 5 do
 		local sh = create("Frame", {
 			AnchorPoint = Vector2.new(0.5, 0.5),
@@ -399,14 +411,14 @@ function Library.new(opts)
 		Name = "Main",
 		Size = UDim2.fromScale(1, 1),
 		BackgroundColor3 = Theme.Window,
-		BackgroundTransparency = 0.04,
+		BackgroundTransparency = 0.03,
 		BorderSizePixel = 0,
 		GroupTransparency = 1,
 		Visible = false,
 		ZIndex = 2,
 		Parent = self.Holder,
 	})
-	corner(self.Main, 16)
+	corner(self.Main, 14)
 	stroke(self.Main, Theme.Stroke, 1, 0.2)
 
 	---------------------------------------------------------------- сайдбар
@@ -414,7 +426,7 @@ function Library.new(opts)
 	local side = create("Frame", {
 		Size = UDim2.new(0, SIDE_W, 1, 0),
 		BackgroundColor3 = Theme.Sidebar,
-		BackgroundTransparency = 0.3,
+		BackgroundTransparency = 0.02,
 		BorderSizePixel = 0,
 		Parent = self.Main,
 	})
@@ -538,8 +550,10 @@ function Library.new(opts)
 		Parent = self.Main,
 	})
 	local topbar = create("Frame", {
-		Size = UDim2.new(1, 0, 0, 54),
-		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 56),
+		BackgroundColor3 = Theme.Toolbar,
+		BackgroundTransparency = 0.04,
+		BorderSizePixel = 0,
 		Parent = content,
 	})
 	create("Frame", {
@@ -551,8 +565,9 @@ function Library.new(opts)
 		Parent = topbar,
 	})
 	self.Pages = create("Frame", {
-		Position = UDim2.fromOffset(0, 55),
-		Size = UDim2.new(1, 0, 1, -55),
+		Position = UDim2.fromOffset(0, 57),
+		Size = UDim2.new(1, 0, 1, -57),
+		ClipsDescendants = true,
 		BackgroundTransparency = 1,
 		Parent = content,
 	})
@@ -580,6 +595,7 @@ function Library.new(opts)
 		LayoutOrder = 0,
 		Parent = self.TopLeft,
 	})
+	self._presetBtn = presetBtn
 	corner(presetBtn, 8)
 	stroke(presetBtn, Theme.Stroke, 1, 0.4)
 	local psave = icon(presetBtn, "save", WHITE)
@@ -702,54 +718,89 @@ function Library.new(opts)
 		self.Blur = create("BlurEffect", { Size = 0, Name = "NeverloseBlur", Parent = Lighting })
 	end
 
+	self._splashing = false
 	self:_connect(UserInputService.InputBegan, function(input, gp)
-		if not gp and self._ready and input.KeyCode == self.ToggleKey then
+		if gp then
+			return
+		end
+		if self._ready and input.KeyCode == self.ToggleKey then
 			self:SetVisible(not self.Visible)
+		elseif input.KeyCode == Enum.KeyCode.F5 and self._ready and opts.ReplayKey ~= false then
+			self:Replay() -- F5: повтор стартовой анимации
+		elseif input.KeyCode == Enum.KeyCode.Escape and self._splashing then
+			self._skipSplash = true -- Esc: пропустить интро
 		end
 	end)
 
 	self:_readPresets()
 
 	-- стартовая анимация
+	self._title = title
 	if opts.Intro == false then
 		self._ready = true
 		self:SetVisible(true)
 	else
-		task.spawn(function()
-			local splash = create("TextLabel", {
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				Position = UDim2.fromScale(0.5, 0.5),
-				Size = UDim2.fromOffset(500, 70),
-				BackgroundTransparency = 1,
-				Text = title,
-				TextSize = 44,
-				Font = Enum.Font.GothamBlack,
-				TextColor3 = WHITE,
-				TextTransparency = 1,
-				Parent = self.Root,
-			})
-			local line = create("Frame", {
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				Position = UDim2.new(0.5, 0, 0.5, 36),
-				Size = UDim2.fromOffset(0, 2),
-				BackgroundColor3 = self.Accent,
-				BorderSizePixel = 0,
-				Parent = self.Root,
-			})
-			tween(splash, 0.5, { TextTransparency = 0 })
-			tween(line, 0.7, { Size = UDim2.fromOffset(190, 2) }, Enum.EasingStyle.Quart)
-			task.wait(1.1)
-			tween(splash, 0.35, { TextTransparency = 1 })
-			tween(line, 0.35, { BackgroundTransparency = 1 })
-			task.wait(0.4)
-			splash:Destroy()
-			line:Destroy()
-			self._ready = true
-			self:SetVisible(true)
-		end)
+		self:_intro()
 	end
 
 	return self
+end
+
+-- стартовая заставка (~3.4 c; Esc пропускает), затем меню плавно появляется
+function Library:_intro()
+	if self._splashing then
+		return
+	end
+	self._splashing = true
+	self._skipSplash = false
+	self._ready = false
+	task.spawn(function()
+		local function wait(sec)
+			local t0 = os.clock()
+			while os.clock() - t0 < sec and not self._skipSplash do
+				task.wait()
+			end
+		end
+		local splash = create("TextLabel", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromOffset(500, 70),
+			BackgroundTransparency = 1,
+			Text = self._title,
+			TextSize = 44,
+			Font = Enum.Font.GothamBlack,
+			TextColor3 = WHITE,
+			TextTransparency = 1,
+			Parent = self.Root,
+		})
+		local line = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(0.5, 0, 0.5, 36),
+			Size = UDim2.fromOffset(0, 2),
+			BackgroundColor3 = self.Accent,
+			BorderSizePixel = 0,
+			Parent = self.Root,
+		})
+		if self.Visible then
+			self:SetVisible(false)
+			wait(0.25)
+		end
+		tween(splash, 0.6, { TextTransparency = 0 })
+		tween(line, 0.9, { Size = UDim2.fromOffset(220, 2) }, Enum.EasingStyle.Quart)
+		wait(2.4)
+		tween(splash, 0.4, { TextTransparency = 1 })
+		tween(line, 0.4, { BackgroundTransparency = 1 })
+		wait(0.4)
+		splash:Destroy()
+		line:Destroy()
+		self._splashing = false
+		self._ready = true
+		self:SetVisible(true)
+	end)
+end
+
+function Library:Replay()
+	self:_intro()
 end
 
 function Library:_connect(signal, fn)
@@ -784,13 +835,15 @@ end
 
 function Library:SetVisible(v)
 	self.Visible = v
+	local t = v and 0.48 or 0.2
 	if v then
 		self.Main.Visible = true
+		self.Main.Position = UDim2.fromOffset(0, 16) -- подъём на 16 px
 	end
-	tween(self.Main, 0.2, { GroupTransparency = v and 0 or 1 })
-	tween(self.Pop, 0.2, { Scale = v and 1 or 0.96 })
+	tween(self.Main, t, { GroupTransparency = v and 0 or 1, Position = UDim2.fromOffset(0, v and 0 or 8) }, Enum.EasingStyle.Quint)
+	tween(self.Pop, t, { Scale = v and 1 or 0.96 }, Enum.EasingStyle.Quint)
 	for _, s in ipairs(self._shadows) do
-		tween(s.frame, 0.2, { BackgroundTransparency = v and s.base or 1 })
+		tween(s.frame, t, { BackgroundTransparency = v and s.base or 1 })
 	end
 	if self.Blur then
 		tween(self.Blur, 0.25, { Size = v and self.BlurSize or 0 })
@@ -871,11 +924,17 @@ function Library:_popup(anchor, width, height, build, opts)
 		ZIndex = 2,
 		Parent = holder,
 	})
-	corner(frame, 12)
+	corner(frame, 15)
 	stroke(frame, Theme.Stroke, 1, 0.1)
 	self._popupFrame = holder
 	self.Overlay.Visible = true
 	build(frame)
+
+	-- fade-scale-rise
+	local sc = create("UIScale", { Scale = 0.94, Parent = holder })
+	holder.Position = UDim2.fromOffset(x, y + 8)
+	tween(sc, 0.18, { Scale = 1 }, Enum.EasingStyle.Quint)
+	tween(holder, 0.18, { Position = UDim2.fromOffset(x, y) }, Enum.EasingStyle.Quint)
 	return frame
 end
 
@@ -896,28 +955,36 @@ function Library:_listPopup(anchor, items, isSel, onPick, keepOpen)
 			Parent = frame,
 		})
 		create("UIListLayout", { Padding = UDim.new(0, 2), Parent = sc })
-		local buttons = {}
+		local buttons, checks = {}, {}
 		local function paint()
 			for it, b in pairs(buttons) do
 				local sel = isSel(it)
-				b.TextColor3 = sel and lib.Accent or Theme.Text
-				b.BackgroundTransparency = sel and 0.4 or 1
+				b.TextColor3 = sel and WHITE or Theme.SubText
+				b.BackgroundTransparency = sel and 0 or 1
+				checks[it].Visible = sel
+				tint(checks[it], lib.Accent)
 			end
 		end
 		for _, it in ipairs(items) do
 			local b = create("TextButton", {
 				Size = UDim2.new(1, -4, 0, 26),
-				BackgroundColor3 = Theme.Box,
+				BackgroundColor3 = Theme.Active,
 				BackgroundTransparency = 1,
-				Text = "  " .. tostring(it),
+				Text = tostring(it),
 				TextXAlignment = Enum.TextXAlignment.Left,
-				TextSize = 12,
+				TextSize = 13,
 				Font = FONT,
 				AutoButtonColor = false,
 				Parent = sc,
 			})
-			corner(b, 6)
+			create("UIPadding", { PaddingLeft = UDim.new(0, 28), Parent = b })
+			corner(b, 8)
 			buttons[it] = b
+			-- левая галочка выбранного пункта
+			local ck = icon(b, "check", lib.Accent)
+			ck.Position = UDim2.fromOffset(-24, 4)
+			ck.Visible = false
+			checks[it] = ck
 			b.MouseButton1Click:Connect(function()
 				onPick(it)
 				paint()
@@ -1404,84 +1471,94 @@ end
 ---------------------------------------------------------------------
 function Library:_openSettings(anchor)
 	local lib = self
-	self:_popup(anchor, 250, 232, function(frame)
-		-- Получаем игрока напрямую
+	local ROW = 28
+	self:_popup(anchor, 215, 395, function(frame)
 		local player = Players.LocalPlayer
-		
+
+		-- шапка: аватар, имя, подпись
 		local av = create("ImageLabel", {
 			Position = UDim2.fromOffset(12, 12),
-			Size = UDim2.fromOffset(36, 36),
+			Size = UDim2.fromOffset(34, 34),
 			BackgroundColor3 = Theme.Box,
-			ImageColor3 = Color3.new(1, 1, 1),
 			BorderSizePixel = 0,
-			Image = "",
 			Parent = frame,
 		})
-		corner(av, 18)
-
+		corner(av, 17)
 		task.spawn(function()
 			local ok, img = pcall(function()
-				return Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+				return Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
 			end)
 			if ok and img then
 				av.Image = img
 			end
 		end)
+		local n = label(frame, player.DisplayName, 14, WHITE, FONT_BOLD)
+		n.Position = UDim2.fromOffset(54, 12)
+		n.Size = UDim2.new(1, -66, 0, 17)
+		n.TextTruncate = Enum.TextTruncate.AtEnd
+		local k = label(frame, "Toggle key: " .. lib.ToggleKey.Name, 12, Theme.SubText)
+		k.Position = UDim2.fromOffset(54, 29)
+		k.Size = UDim2.new(1, -66, 0, 16)
 
-		-- ТЕПЕРЬ ИСПОЛЬЗУЕМ player ВМЕСТО lp
-		local n = label(frame, player.DisplayName, 13, WHITE, FONT_BOLD)
-		n.Position = UDim2.fromOffset(56, 14)
-		n.Size = UDim2.new(1, -68, 0, 16)
-		
-		local k = label(frame, "Toggle key: " .. lib.ToggleKey.Name, 11, lib.Accent)
-		k.Position = UDim2.fromOffset(56, 31)
-		k.Size = UDim2.new(1, -68, 0, 14)
-		
 		create("Frame", {
-			Position = UDim2.fromOffset(12, 58),
+			Position = UDim2.fromOffset(12, 56),
 			Size = UDim2.new(1, -24, 0, 1),
 			BackgroundColor3 = Theme.Divider,
 			BorderSizePixel = 0,
 			Parent = frame,
 		})
 
-		local function prow(y, iconName, text)
+		local y = 64
+		local function prow(iconName, text, cb)
 			local b = create("TextButton", {
-				Position = UDim2.fromOffset(8, y),
-				Size = UDim2.new(1, -16, 0, 34),
+				Position = UDim2.fromOffset(6, y),
+				Size = UDim2.new(1, -12, 0, ROW),
 				BackgroundColor3 = Theme.Active,
 				BackgroundTransparency = 1,
 				Text = "",
 				AutoButtonColor = false,
 				Parent = frame,
 			})
-			corner(b, 8)
+			y += ROW
+			corner(b, 6)
 			local ic = icon(b, iconName, Theme.SubText)
 			placeIcon(ic, 0, 0, 8)
 			local l = label(b, text, 13, Theme.Text)
-			l.Position = UDim2.fromOffset(36, 0)
-			l.Size = UDim2.new(1, -120, 1, 0)
+			l.Position = UDim2.fromOffset(34, 0)
+			l.Size = UDim2.new(1, -90, 1, 0)
 			b.MouseEnter:Connect(function()
-				tween(b, 0.1, { BackgroundTransparency = 0.5 })
+				tween(b, 0.1, { BackgroundTransparency = 0.4 })
 			end)
 			b.MouseLeave:Connect(function()
 				tween(b, 0.1, { BackgroundTransparency = 1 })
 			end)
-			return b
+			if cb then
+				b.MouseButton1Click:Connect(cb)
+			end
+			return b, l
+		end
+		local function value(b, text)
+			local v = label(b, text, 12, Theme.SubText, FONT, Enum.TextXAlignment.Right)
+			v.AnchorPoint = Vector2.new(1, 0)
+			v.Position = UDim2.new(1, -10, 0, 0)
+			v.Size = UDim2.new(0, 56, 1, 0)
+			return v
 		end
 
-		-- масштаб
+		-- 1) Config / Profile
+		prow("cloud", "Config", function()
+			lib:_openPresets(lib._presetBtn)
+		end)
+		prow("user", "Profile", function()
+			if setclipboard then
+				pcall(setclipboard, player.Name)
+			end
+		end)
+
+		-- 3) масштаб
 		local scales = { 0.75, 0.9, 1, 1.15, 1.25, 1.5 }
-		local sBtn = prow(66, "sliders", "Menu Scale")
-		local sVal = label(sBtn, "", 12, Theme.SubText, FONT, Enum.TextXAlignment.Right)
-		sVal.Position = UDim2.new(1, -34, 0, 0)
-		sVal.Size = UDim2.new(0, 60, 1, 0)
-		local sch = icon(sBtn, "chevright", Theme.SubText)
-		placeIcon(sch, 1, 1, -4)
-		local function showScale()
-			sVal.Text = string.format("%d%%", math.floor(lib.Scale * 100 + 0.5))
-		end
-		showScale()
+		local sBtn = prow("sliders", "Menu Scale")
+		local sVal = value(sBtn, string.format("%d%%", math.floor(lib.Scale * 100 + 0.5)))
 		sBtn.MouseButton1Click:Connect(function()
 			local nextS = scales[1]
 			for _, s in ipairs(scales) do
@@ -1491,15 +1568,15 @@ function Library:_openSettings(anchor)
 				end
 			end
 			lib:SetScale(nextS)
-			showScale()
+			sVal.Text = string.format("%d%%", math.floor(lib.Scale * 100 + 0.5))
 		end)
 
-		-- акцент-цвет
-		local aBtn = prow(100, "gear", "Style")
+		-- 4) акцент
+		local aBtn = prow("gear", "Accent")
 		local aSw = create("Frame", {
 			AnchorPoint = Vector2.new(1, 0.5),
 			Position = UDim2.new(1, -10, 0.5, 0),
-			Size = UDim2.fromOffset(16, 16),
+			Size = UDim2.fromOffset(14, 14),
 			BackgroundColor3 = lib.Accent,
 			BorderSizePixel = 0,
 			Parent = aBtn,
@@ -1510,49 +1587,102 @@ function Library:_openSettings(anchor)
 			st.h, st.s, st.v = Color3.toHSV(lib.Accent)
 			function st.changed()
 				lib:SetAccent(Color3.fromHSV(st.h, st.s, st.v))
+				aSw.BackgroundColor3 = lib.Accent
 			end
 			lib:_openColor(aBtn, st)
 		end)
 
-		-- блюр
-		local bBtn = prow(134, "layers", "Background Blur")
-		local pill = create("Frame", {
-			AnchorPoint = Vector2.new(1, 0.5),
-			Position = UDim2.new(1, -10, 0.5, 0),
-			Size = UDim2.fromOffset(34, 20),
-			BackgroundColor3 = Theme.Off,
-			BorderSizePixel = 0,
-			Parent = bBtn,
-		})
-		corner(pill, 10)
-		local knob = create("Frame", {
-			AnchorPoint = Vector2.new(0, 0.5),
-			Size = UDim2.fromOffset(16, 16),
-			BackgroundColor3 = Theme.OffKnob,
-			BorderSizePixel = 0,
-			Parent = pill,
-		})
-		corner(knob, 8)
-		local function paintBlur()
-			local on = lib.Blur ~= nil and lib.BlurSize > 0
-			pill.BackgroundColor3 = on and lib.Accent or Theme.Off
-			knob.BackgroundColor3 = on and WHITE or Theme.OffKnob
-			knob.Position = on and UDim2.new(1, -18, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
-		end
-		paintBlur()
-		bBtn.MouseButton1Click:Connect(function()
-			if lib.Blur then
-				lib.BlurSize = (lib.BlurSize > 0) and 0 or 12
-				tween(lib.Blur, 0.2, { Size = lib.BlurSize })
-				paintBlur()
+		-- 5-8) сервисные строки
+		prow("layers", "Replay Intro  (F5)", function()
+			lib:_closePopup()
+			lib:Replay()
+		end)
+		prow("mouse", "Reset Position", function()
+			lib.Holder.Position = UDim2.fromScale(0.5, 0.5)
+		end)
+		prow("upload", "Copy Config", function()
+			if setclipboard then
+				pcall(function()
+					setclipboard(HttpService:JSONEncode(lib:_snapshot()))
+				end)
 			end
 		end)
-
-		-- выгрузить
-		local uBtn = prow(168, "trash", "Unload Menu")
-		uBtn.MouseButton1Click:Connect(function()
+		prow("trash", "Unload Menu", function()
 			lib:Destroy()
 		end)
+
+		-- два тумблера: Blur / Auto-save
+		local function ptoggle(text, get, set)
+			local b = prow("dot", text)
+			local pill = create("Frame", {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -10, 0.5, 0),
+				Size = UDim2.fromOffset(29, 18),
+				BackgroundColor3 = Theme.Off,
+				BorderSizePixel = 0,
+				Parent = b,
+			})
+			corner(pill, 9)
+			local knob = create("Frame", {
+				AnchorPoint = Vector2.new(0, 0.5),
+				Size = UDim2.fromOffset(14, 14),
+				BackgroundColor3 = Theme.OffKnob,
+				BorderSizePixel = 0,
+				Parent = pill,
+			})
+			corner(knob, 7)
+			local function paint(animate)
+				local on = get()
+				apply(pill, { BackgroundColor3 = on and lib.Accent or Theme.Off }, animate, 0.16)
+				apply(knob, {
+					Position = on and UDim2.new(1, -16, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
+					BackgroundColor3 = on and WHITE or Theme.OffKnob,
+				}, animate, 0.16)
+			end
+			paint(false)
+			b.MouseButton1Click:Connect(function()
+				set(not get())
+				paint(true)
+			end)
+		end
+		ptoggle("Background Blur", function()
+			return lib.Blur ~= nil and lib.BlurSize > 0
+		end, function(on)
+			if lib.Blur then
+				lib.BlurSize = on and (lib._opts.BlurSize or 12) or 0
+				if lib.Visible then
+					tween(lib.Blur, 0.2, { Size = lib.BlurSize })
+				end
+			end
+		end)
+		ptoggle("Auto-save Preset", function()
+			return lib.AutoSave == true
+		end, function(on)
+			lib.AutoSave = on
+		end)
+
+		-- style chip
+		local chip = create("Frame", {
+			Position = UDim2.fromOffset(12, y + 8),
+			Size = UDim2.fromOffset(104, 22),
+			BackgroundColor3 = Theme.Box,
+			BorderSizePixel = 0,
+			Parent = frame,
+		})
+		corner(chip, 11)
+		local cd = create("Frame", {
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.new(0, 8, 0.5, 0),
+			Size = UDim2.fromOffset(8, 8),
+			BackgroundColor3 = Theme.Chip,
+			BorderSizePixel = 0,
+			Parent = chip,
+		})
+		corner(cd, 4)
+		local cl = label(chip, lib.PresetName or "Default style", 12, Theme.Chip, FONT_BOLD)
+		cl.Position = UDim2.fromOffset(22, 0)
+		cl.Size = UDim2.new(1, -26, 1, 0)
+		cl.TextTruncate = Enum.TextTruncate.AtEnd
 	end, { above = true })
 end
 ---------------------------------------------------------------------
@@ -1628,7 +1758,7 @@ function Library:Category(name)
 		LayoutOrder = self:_next(),
 		Parent = self.Nav,
 	})
-	local l = label(holder, string.upper(name), 10, Theme.SubText, FONT_BOLD)
+	local l = label(holder, string.upper(name), 10, Theme.Faint, FONT_BOLD)
 	l.Position = UDim2.fromOffset(8, 4)
 	l.Size = UDim2.new(1, -8, 1, -4)
 	return l
@@ -1655,15 +1785,15 @@ local function makeTab(lib, name, icn, parent)
 		Parent = lib.Nav,
 	})
 	local btn = create("TextButton", {
-		Position = UDim2.fromOffset(indent, 0),
-		Size = UDim2.new(1, -indent, 1, 0),
+		Position = UDim2.fromOffset(indent, 1),
+		Size = UDim2.new(1, -indent, 0, 30), -- nav item 140x30
 		BackgroundColor3 = Theme.Active,
 		BackgroundTransparency = 1,
 		Text = "",
 		AutoButtonColor = false,
 		Parent = holder,
 	})
-	corner(btn, 8)
+	corner(btn, 6)
 	local ic = icon(btn, icn or "dot", Theme.SubText)
 	placeIcon(ic, 0, 0, 9)
 	local text = label(btn, name, 13, Theme.SubText)
@@ -1756,7 +1886,13 @@ function Library:_select(tab)
 	if #tab.Children > 0 then
 		tab = tab.Children[1]
 	end
+	local changed = self._active ~= tab
 	self._active = tab
+	if changed and self._ready ~= nil then
+		-- смена страницы: подъём на 16 px за ~220 мс
+		tab.Page.Position = UDim2.fromOffset(0, 16)
+		tween(tab.Page, 0.22, { Position = UDim2.fromOffset(0, 0) }, Enum.EasingStyle.Quint)
+	end
 	for _, t in ipairs(self._allTabs) do
 		local on = (t == tab) or (tab.Parent == t)
 		t._active = on
@@ -1781,7 +1917,7 @@ function Tab:Group(name, side)
 		Parent = col,
 	})
 	create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = g.Holder })
-	local head = label(g.Holder, string.upper(name), 10, Theme.SubText, FONT_BOLD)
+	local head = label(g.Holder, string.upper(name), 10, Theme.Faint, FONT_BOLD)
 	head.Size = UDim2.new(1, 0, 0, 14)
 	head.LayoutOrder = 0
 	create("UIPadding", { PaddingLeft = UDim.new(0, 6), Parent = head })
@@ -1790,13 +1926,13 @@ function Tab:Group(name, side)
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundColor3 = Theme.Card,
-		BackgroundTransparency = 0.1,
+		BackgroundTransparency = 0.02,
 		BorderSizePixel = 0,
 		LayoutOrder = 1,
 		Parent = g.Holder,
 	})
-	corner(g.Frame, 10)
-	stroke(g.Frame, Theme.Stroke, 1, 0.2)
+	corner(g.Frame, 13)
+	stroke(g.Frame, Theme.Stroke, 1, 0)
 	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Parent = g.Frame })
 
 	table.insert(self._groups, g)
@@ -1832,8 +1968,8 @@ function Group:_row(name, height)
 end
 
 local function rowLabel(row, text, reserve)
-	local l = label(row, text, 13, Theme.Text)
-	l.Position = UDim2.fromOffset(12, 0)
+	local l = label(row, text, 14, Theme.Text)
+	l.Position = UDim2.fromOffset(14, 0)
 	l.Size = UDim2.new(1, -(24 + (reserve or 0)), 1, 0)
 	l.TextTruncate = Enum.TextTruncate.AtEnd
 	return l
@@ -1849,7 +1985,7 @@ local function boxButton(parent, w, h)
 		AutoButtonColor = false,
 		Parent = parent,
 	})
-	corner(b, 6)
+	corner(b, 5)
 	return b
 end
 
@@ -1862,6 +1998,15 @@ end
 local function fire(lib, flag, value, cb)
 	if flag then
 		lib.Flags[flag] = value
+	end
+	if lib.AutoSave and lib.PresetName and not lib._saving then
+		lib._saving = true
+		task.delay(1, function()
+			lib._saving = false
+			if lib.AutoSave and lib.PresetName then
+				lib:SavePreset(lib.PresetName)
+			end
+		end)
 	end
 	if cb then
 		task.spawn(cb, value)
@@ -2007,30 +2152,30 @@ function Group:Toggle(o)
 
 	local pill = create("TextButton", {
 		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -12, 0.5, 0),
-		Size = UDim2.fromOffset(34, 20),
+		Position = UDim2.new(1, -14, 0.5, 0),
+		Size = UDim2.fromOffset(29, 18), -- toggle 29x18
 		BackgroundColor3 = Theme.Off,
 		Text = "",
 		AutoButtonColor = false,
 		Parent = r,
 	})
-	corner(pill, 10)
+	corner(pill, 9)
 	local knob = create("Frame", {
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 2, 0.5, 0),
-		Size = UDim2.fromOffset(16, 16),
+		Size = UDim2.fromOffset(14, 14), -- thumb 14
 		BackgroundColor3 = Theme.OffKnob,
 		BorderSizePixel = 0,
 		Parent = pill,
 	})
-	corner(knob, 8)
+	corner(knob, 7)
 
 	local api = { _n = 0 }
 	local state = o.Default == true
 	local function render(animate)
-		apply(pill, { BackgroundColor3 = state and lib.Accent or Theme.Off }, animate)
+		apply(pill, { BackgroundColor3 = state and lib.Accent or Theme.Off }, animate, 0.16)
 		apply(knob, {
-			Position = state and UDim2.new(1, -18, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
+			Position = state and UDim2.new(1, -16, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
 			BackgroundColor3 = state and WHITE or Theme.OffKnob,
 		}, animate)
 	end
@@ -2054,7 +2199,7 @@ function Group:Toggle(o)
 	end
 	function api:AddColor(co)
 		self._n += 1
-		return makeColor(lib, r, co, -(12 + 34 + 10) - (self._n - 1) * 24)
+		return makeColor(lib, r, co, -(14 + 29 + 10) - (self._n - 1) * 24)
 	end
 	register(lib, o.Flag, function()
 		return state
@@ -2080,33 +2225,33 @@ function Group:Slider(o)
 	local suffix = o.Suffix or ""
 
 	local r = self:_row(o.Name)
-	rowLabel(r, o.Name or "Slider", 160)
+	rowLabel(r, o.Name or "Slider", 190)
 
 	local box = create("TextBox", {
 		AnchorPoint = Vector2.new(1, 0.5),
 		Position = UDim2.new(1, -12, 0.5, 0),
-		Size = UDim2.fromOffset(48, 22),
+		Size = UDim2.fromOffset(46, 22),
 		BackgroundColor3 = Theme.Box,
 		TextColor3 = Theme.SubText,
-		TextSize = 12,
+		TextSize = 13,
 		Font = FONT,
 		ClearTextOnFocus = false,
 		Text = "",
 		Parent = r,
 	})
-	corner(box, 6)
+	corner(box, 11) -- value pill
 
 	local hit = create("Frame", {
 		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -68, 0.5, 0),
-		Size = UDim2.fromOffset(88, 20),
+		Position = UDim2.new(1, -66, 0.5, 0),
+		Size = UDim2.fromOffset(126, 20), -- slider 126
 		BackgroundTransparency = 1,
 		Parent = r,
 	})
 	local bar = create("Frame", {
 		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, 6, 0.5, 0),
-		Size = UDim2.new(1, -12, 0, 3),
+		Position = UDim2.new(0, 5, 0.5, 0),
+		Size = UDim2.new(1, -10, 0, 4), -- track 4
 		BackgroundColor3 = Theme.Off,
 		BorderSizePixel = 0,
 		Parent = hit,
@@ -2122,12 +2267,12 @@ function Group:Slider(o)
 	local knob = create("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0, 0.5),
-		Size = UDim2.fromOffset(12, 12),
+		Size = UDim2.fromOffset(10, 10), -- thumb 10 white
 		BackgroundColor3 = WHITE,
 		BorderSizePixel = 0,
 		Parent = bar,
 	})
-	corner(knob, 6)
+	corner(knob, 5)
 	lib:_onAccent(function(c)
 		fill.BackgroundColor3 = c
 	end)
@@ -2141,8 +2286,9 @@ function Group:Slider(o)
 	end
 	local function render()
 		local ratio = (max == min) and 0 or (value - min) / (max - min)
-		tween(fill, 0.08, { Size = UDim2.fromScale(ratio, 1) })
-		tween(knob, 0.08, { Position = UDim2.fromScale(ratio, 0.5) })
+		-- экспоненциальное сглаживание (Exponential Out)
+		tween(fill, 0.25, { Size = UDim2.fromScale(ratio, 1) }, Enum.EasingStyle.Exponential)
+		tween(knob, 0.25, { Position = UDim2.fromScale(ratio, 0.5) }, Enum.EasingStyle.Exponential)
 		box.Text = string.format("%." .. dec .. "f", value) .. suffix
 	end
 
@@ -2203,7 +2349,7 @@ function Group:Combo(o)
 	local r = self:_row(o.Name)
 	rowLabel(r, o.Name or "Combo", 146)
 
-	local btn = boxButton(r, 134, 24)
+	local btn = boxButton(r, 126, 23) -- select 126x23
 	local shown = label(btn, "", 12, Theme.Text)
 	shown.Position = UDim2.fromOffset(10, 0)
 	shown.Size = UDim2.new(1, -30, 1, 0)
