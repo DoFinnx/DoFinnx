@@ -1405,14 +1405,14 @@ end
 function Library:_openSettings(anchor)
 	local lib = self
 	self:_popup(anchor, 250, 232, function(frame)
-		-- ВОЗВРАЩАЕМ ПЕРЕМЕННУЮ lp
-		local lp = Players.LocalPlayer
+		-- Получаем игрока напрямую
+		local player = Players.LocalPlayer
 		
 		local av = create("ImageLabel", {
 			Position = UDim2.fromOffset(12, 12),
 			Size = UDim2.fromOffset(36, 36),
 			BackgroundColor3 = Theme.Box,
-			ImageColor3 = Color3.new(1, 1, 1), -- Делает картинку видимой
+			ImageColor3 = Color3.new(1, 1, 1),
 			BorderSizePixel = 0,
 			Image = "",
 			Parent = frame,
@@ -1421,15 +1421,15 @@ function Library:_openSettings(anchor)
 
 		task.spawn(function()
 			local ok, img = pcall(function()
-				return Players:GetUserThumbnailAsync(lp.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+				return Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
 			end)
 			if ok and img then
 				av.Image = img
 			end
 		end)
 
-		-- Теперь lp существует, и эта строка не вызовет ошибку
-		local n = label(frame, lp.DisplayName, 13, WHITE, FONT_BOLD)
+		-- ТЕПЕРЬ ИСПОЛЬЗУЕМ player ВМЕСТО lp
+		local n = label(frame, player.DisplayName, 13, WHITE, FONT_BOLD)
 		n.Position = UDim2.fromOffset(56, 14)
 		n.Size = UDim2.new(1, -68, 0, 16)
 		
@@ -1555,7 +1555,6 @@ function Library:_openSettings(anchor)
 		end)
 	end, { above = true })
 end
-
 ---------------------------------------------------------------------
 -- поиск по элементам
 ---------------------------------------------------------------------
