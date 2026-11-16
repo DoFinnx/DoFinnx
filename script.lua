@@ -1405,11 +1405,13 @@ end
 function Library:_openSettings(anchor)
 	local lib = self
 	self:_popup(anchor, 250, 232, function(frame)
-				local av = create("ImageLabel", {
+		local lp = Players.LocalPlayer -- ВОЗВРАЩАЕМ ПЕРЕМЕННУЮ
+		
+		local av = create("ImageLabel", {
 			Position = UDim2.fromOffset(12, 12),
 			Size = UDim2.fromOffset(36, 36),
 			BackgroundColor3 = Theme.Box,
-			ImageColor3 = Color3.new(1, 1, 1), -- ВАЖНО: делает картинку видимой
+			ImageColor3 = Color3.new(1, 1, 1), -- Делает картинку видимой
 			BorderSizePixel = 0,
 			Image = "",
 			Parent = frame,
@@ -1418,18 +1420,22 @@ function Library:_openSettings(anchor)
 
 		task.spawn(function()
 			local ok, img = pcall(function()
-				return Players:GetUserThumbnailAsync(Players.LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+				return Players:GetUserThumbnailAsync(lp.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
 			end)
 			if ok and img then
 				av.Image = img
 			end
 		end)
+
+		-- Теперь lp существует, и эта строка не вызовет ошибку
 		local n = label(frame, lp.DisplayName, 13, WHITE, FONT_BOLD)
 		n.Position = UDim2.fromOffset(56, 14)
 		n.Size = UDim2.new(1, -68, 0, 16)
+		
 		local k = label(frame, "Toggle key: " .. lib.ToggleKey.Name, 11, lib.Accent)
 		k.Position = UDim2.fromOffset(56, 31)
 		k.Size = UDim2.new(1, -68, 0, 14)
+		
 		create("Frame", {
 			Position = UDim2.fromOffset(12, 58),
 			Size = UDim2.new(1, -24, 0, 1),
@@ -1548,7 +1554,6 @@ function Library:_openSettings(anchor)
 		end)
 	end, { above = true })
 end
-
 ---------------------------------------------------------------------
 -- поиск по элементам
 ---------------------------------------------------------------------
