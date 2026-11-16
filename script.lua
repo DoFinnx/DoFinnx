@@ -1405,27 +1405,25 @@ end
 function Library:_openSettings(anchor)
 	local lib = self
 	self:_popup(anchor, 250, 232, function(frame)
-		local lp = Players.LocalPlayer
-local av = create("ImageLabel", {
-    Position = UDim2.fromOffset(12, 12),
-    Size = UDim2.fromOffset(36, 36),
-    BackgroundColor3 = Theme.Box,
-    BorderSizePixel = 0,
-    Image = "", -- Очищаем на всякий случай
-    Parent = frame,
-})
-corner(av, 18)
+				local av = create("ImageLabel", {
+			Position = UDim2.fromOffset(12, 12),
+			Size = UDim2.fromOffset(36, 36),
+			BackgroundColor3 = Theme.Box,
+			ImageColor3 = Color3.new(1, 1, 1), -- ВАЖНО: делает картинку видимой
+			BorderSizePixel = 0,
+			Image = "",
+			Parent = frame,
+		})
+		corner(av, 18)
 
--- Загрузка аватарки
-task.spawn(function()
-    local lp = Players.LocalPlayer
-    local ok, img = pcall(function()
-        return Players:GetUserThumbnailAsync(lp.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-    end)
-    if ok and img then
-        av.Image = img
-    end
-end)
+		task.spawn(function()
+			local ok, img = pcall(function()
+				return Players:GetUserThumbnailAsync(Players.LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+			end)
+			if ok and img then
+				av.Image = img
+			end
+		end)
 		local n = label(frame, lp.DisplayName, 13, WHITE, FONT_BOLD)
 		n.Position = UDim2.fromOffset(56, 14)
 		n.Size = UDim2.new(1, -68, 0, 16)
