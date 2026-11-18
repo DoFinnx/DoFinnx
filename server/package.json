@@ -1,0 +1,13 @@
+{
+  "name": "nocturne-presence",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Presence server for Nocturne UI Synchronization",
+  "main": "presence-server.js",
+  "scripts": {
+    "start": "node presence-server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
