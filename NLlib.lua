@@ -18,7 +18,7 @@ local Stats = game:GetService("Stats")
 local LocalPlayer = Players.LocalPlayer
 
 local Library = {
-	Version = "1.7.0",
+	Version = "1.8.0",
 	Flags = {},
 	Windows = {},
 	Keybinds = {},
@@ -513,6 +513,26 @@ local IconDrawers = {
 		iconRing(f, 0, 2, 12, 8, 1.5, 4)
 		iconPart(f, 4, 4, 4, 4, 2)
 	end,
+	-- вкладка Legit: мишень
+	target = function(f)
+		iconRing(f, 0.5, 0.5, 11, 11, 1.4)
+		iconRing(f, 3.5, 3.5, 5, 5, 1.4)
+		iconPart(f, 5.25, 5.25, 1.5, 1.5, 1)
+	end,
+	-- вкладка Inventory: вешалка/футболка
+	shirt = function(f)
+		iconPart(f, 3, 2, 6, 9.5, 1.5)
+		iconPart(f, 0, 2, 4, 4.5, 1.5).Rotation = -20
+		iconPart(f, 8, 2, 4, 4.5, 1.5).Rotation = 20
+	end,
+	-- вкладка Settings: ползунки
+	sliders = function(f)
+		for i, y in ipairs({ 1.5, 5.25, 9 }) do
+			iconPart(f, 0.5, y, 11, 1.5, 1)
+			local x = ({ 7, 2.5, 6 })[i]
+			iconPart(f, x, y - 1.25, 4, 4, 2)
+		end
+	end,
 	-- галочка для списков
 	check = function(f)
 		iconPart(f, 1.9, 5.3, 1.8, 5, 1).Rotation = -45
@@ -613,6 +633,191 @@ end
 function Container:_track(connection)
 	table.insert(self.window._connections, connection)
 	return connection
+end
+
+----------------------------------------------------------------------
+-- Конфиг: каждый элемент с путём «Вкладка/Секция>Панель#Группа/Тип:Имя»
+-- попадает в Library.Elements и сохраняется/загружается целиком.
+----------------------------------------------------------------------
+
+Library.Elements = {}
+Library._elementOrder = {}
+
+local function serializeValue(value)
+	local kind = typeof(value)
+	if kind == "Color3" then
+		return { __color = value:ToHex() }
+	elseif kind == "EnumItem" then
+		return { __key = value.Name }
+	elseif kind == "table" then
+		local out = {}
+		for index, item in ipairs(value) do
+			out[index] = serializeValue(item)
+		end
+		return out
+	elseif kind == "boolean" or kind == "number" or kind == "string" then
+		return value
+	end
+	return nil
+end
+
+local function deserializeValue(value)
+	if type(value) == "table" then
+		if value.__color then
+			local ok, color = pcall(Color3.fromHex, value.__color)
+			return ok and color or nil
+		end
+		if value.__key then
+			local ok, key = pcall(function()
+				return Enum.KeyCode[value.__key]
+			end)
+			return ok and key or nil
+		end
+		local out = {}
+		for index, item in ipairs(value) do
+			out[index] = deserializeValue(item)
+		end
+		return out
+	end
+	return value
+end
+
+-- Элементы без пути (например, меню профиля) в конфиг не попадают.
+function Container:_register(element)
+	if not self.path then
+		return element
+	end
+	local base = self.path .. "/" .. tostring(element.Type) .. ":" .. tostring(element.Name or "")
+	local key, index = base, 1
+	while Library.Elements[key] do
+		index += 1
+		key = base .. "#" .. index
+	end
+	element.ConfigKey = key
+	if element.Type == "Keybind" then
+		element._getConfig = function()
+			return element.Value or false -- false = «None»
+		end
+	else
+		element._getConfig = function()
+			return element:Get()
+		end
+	end
+	local ok, value = pcall(element._getConfig)
+	element._default = ok and serializeValue(value) or nil
+	Library.Elements[key] = element
+	table.insert(Library._elementOrder, key)
+	return element
+end
+
+local function applyConfigValue(element, raw)
+	if not (element and element.Set) then
+		return
+	end
+	local value = deserializeValue(raw)
+	if element.Type == "Keybind" and value == false then
+		value = nil
+	end
+	pcall(element.Set, element, value)
+end
+
+function Library:GetConfig()
+	local data = {}
+	for _, key in ipairs(self._elementOrder) do
+		local element = self.Elements[key]
+		local ok, value = pcall(element._getConfig)
+		if ok then
+			data[key] = serializeValue(value)
+		end
+	end
+	return data
+end
+
+function Library:ApplyConfig(data)
+	if type(data) ~= "table" then
+		return false
+	end
+	for _, key in ipairs(self._elementOrder) do
+		if data[key] ~= nil then
+			applyConfigValue(self.Elements[key], data[key])
+		end
+	end
+	return true
+end
+
+-- Вернуть всё к значениям по умолчанию (какими элементы были при создании).
+function Library:ResetConfig()
+	for _, key in ipairs(self._elementOrder) do
+		local element = self.Elements[key]
+		applyConfigValue(element, element._default)
+	end
+end
+
+local function configFile(name)
+	return "nocturne_" .. string.gsub(tostring(name or "default"), "[^%w_%-]", "_") .. ".json"
+end
+
+-- Сохранение в файл работает только там, где есть writefile/readfile (инжекторы).
+function Library:SaveConfig(name)
+	if type(writefile) ~= "function" then
+		return false, "writefile is not available"
+	end
+	local ok, err = pcall(function()
+		writefile(configFile(name), HttpService:JSONEncode(self:GetConfig()))
+	end)
+	return ok, err
+end
+
+function Library:LoadConfig(name)
+	if type(isfile) ~= "function" or type(readfile) ~= "function" then
+		return false, "readfile is not available"
+	end
+	local ok, data = pcall(function()
+		local file = configFile(name)
+		if not isfile(file) then
+			return nil
+		end
+		return HttpService:JSONDecode(readfile(file))
+	end)
+	if not ok or type(data) ~= "table" then
+		return false, "config not found"
+	end
+	self:ApplyConfig(data)
+	return true
+end
+
+-- Synchronization: всё меню автоматически пишется в nocturne_sync.json
+-- и восстанавливается при следующем запуске.
+local SYNC_NAME = "sync"
+local lastSyncJson = nil
+
+function Library:_writeSync(force)
+	if not (self.Settings.Sync or force) or type(writefile) ~= "function" then
+		return
+	end
+	-- пока сохранённое не загружено, не перезаписываем файл значениями по умолчанию
+	if not (self._syncLoaded or force) then
+		return
+	end
+	local ok, json = pcall(function()
+		return HttpService:JSONEncode(self:GetConfig())
+	end)
+	if ok and (force or json ~= lastSyncJson) then
+		lastSyncJson = json
+		pcall(writefile, configFile(SYNC_NAME), json)
+	end
+end
+
+function Library:LoadSynced()
+	if self._syncLoaded then
+		return false
+	end
+	self._syncLoaded = true
+	if not self.Settings.Sync then
+		return false
+	end
+	local ok = self:LoadConfig(SYNC_NAME)
+	return ok
 end
 
 -- Тонкая линия между строками внутри карточки секции (в панелях линий нет).
@@ -745,7 +950,7 @@ function Container:AddToggle(opts)
 
 	render(0)
 	setFlag(opts.Flag, toggle.Value)
-	return self:_attachAddons(toggle, acc)
+	return self:_attachAddons(self:_register(toggle), acc)
 end
 
 function Container:AddCheckbox(opts)
@@ -799,7 +1004,7 @@ function Container:AddCheckbox(opts)
 
 	render(0)
 	setFlag(opts.Flag, checkbox.Value)
-	return checkbox
+	return self:_register(checkbox)
 end
 
 function Container:AddSlider(opts)
@@ -1008,7 +1213,7 @@ function Container:AddSlider(opts)
 
 	slider.Value = nil
 	slider:Set(opts.Default or min, true)
-	return slider
+	return self:_register(slider)
 end
 
 -- Style: "Field" (поле со стрелкой, список под ним) или "Inline" («Значение ›», список сбоку).
@@ -1286,7 +1491,7 @@ function Container:AddDropdown(opts)
 	rebuild()
 	table.insert(Library._languageListeners, render)
 	setFlag(opts.Flag, dropdown:Get())
-	return dropdown
+	return self:_register(dropdown)
 end
 
 -- Список с галочками (Scoreboard, Removals в референсе).
@@ -1380,7 +1585,7 @@ function Container:AddChecklist(opts)
 	end
 	render(0)
 	setFlag(opts.Flag, selectedList())
-	return checklist
+	return self:_register(checklist)
 end
 
 -- Группа-карточка внутри всплывающей панели; у неё те же Add*-методы.
@@ -1408,7 +1613,9 @@ function Container:AddGroup()
 		AutomaticSize = Enum.AutomaticSize.Y,
 		Parent = card,
 	}, { padding(12, 4, 12, 4), listLayout(0) })
+	self._groups = (self._groups or 0) + 1
 	return setmetatable({
+		path = self.path and (self.path .. "#" .. self._groups) or nil,
 		window = self.window,
 		tab = self.tab,
 		holder = holder,
@@ -1541,7 +1748,7 @@ function Container:AddChips(opts)
 	self:_track(box:GetPropertyChangedSignal("AbsoluteSize"):Connect(layoutChips))
 	layoutChips()
 	chips:Set(opts.Default or {}, true)
-	return chips
+	return self:_register(chips)
 end
 
 -- Поле ввода текста. Callback(text, enterPressed) вызывается при потере фокуса.
@@ -1598,7 +1805,7 @@ function Container:AddTextbox(opts)
 	end
 
 	setFlag(opts.Flag, textbox.Value)
-	return textbox
+	return self:_register(textbox)
 end
 
 function Container:AddButton(opts)
@@ -1658,6 +1865,7 @@ function Container:AddSubmenu(opts)
 	local window = self.window
 	local row, _, acc = self:_row(name, nil, nil, opts.Icon)
 	local panel = window:_panel(opts.Title or name)
+	panel.path = self.path and (self.path .. ">" .. name) or nil
 	corner(8).Parent = row
 
 	local valueText
@@ -1777,6 +1985,7 @@ end
 function Container:_settings(acc, title, order)
 	local window = self.window
 	local panel = window:_panel(title)
+	panel.path = self.path and (self.path .. ">" .. title .. "...") or nil
 	local dots = create("TextButton", {
 		Text = "···",
 		Font = FONT_BOLD,
@@ -1922,12 +2131,12 @@ function Container:_keybind(acc, opts, order, target)
 
 	render()
 	setFlag(opts.Flag, keybind.Value)
-	return keybind
+	return self:_register(keybind)
 end
 
 function Container:_colorpicker(acc, opts, order)
 	local window = self.window
-	local colorpicker = { Type = "Colorpicker", Value = opts.Default or Theme.Accent }
+	local colorpicker = { Type = "Colorpicker", Name = opts.Name or "Color", Value = opts.Default or Theme.Accent }
 	local hue, sat, val = colorpicker.Value:ToHSV()
 
 	local swatch = create("TextButton", {
@@ -2084,7 +2293,7 @@ function Container:_colorpicker(acc, opts, order)
 	end)
 
 	render(true)
-	return colorpicker
+	return self:_register(colorpicker)
 end
 
 ----------------------------------------------------------------------
@@ -2149,6 +2358,7 @@ function Tab:AddSection(opts)
 	}, { padding(12, 2, 12, 2), listLayout(0) })
 
 	local section = setmetatable({
+		path = self.Name .. "/" .. (opts.Name or ("Section" .. (#self.sections + 1))),
 		window = self.window,
 		tab = self,
 		holder = holder,
@@ -2406,9 +2616,17 @@ function Window:AddTab(opts)
 		LayoutOrder = self._navOrder,
 		Parent = self.nav,
 	}, { corner(8) })
-	local navIcon = icon(opts.Icon or string.sub(name, 1, 1), 14)
+	-- Icon: имя нарисованной иконки ("crosshair", "eye", "gear"...), rbxassetid или короткий текст.
+	local navIcon
+	if type(opts.Icon) == "string" and IconDrawers[opts.Icon] then
+		navIcon = drawIcon(opts.Icon, navButton)
+		create("UIScale", { Scale = 1.25, Parent = navIcon })
+		paintIcons(navIcon, Theme.Icon)
+	else
+		navIcon = icon(opts.Icon or string.sub(name, 1, 1), 14)
+	end
 	navIcon.AnchorPoint = Vector2.new(0, 0.5)
-	navIcon.Position = UDim2.new(0, 10, 0.5, 0)
+	navIcon.Position = UDim2.new(0, 11, 0.5, 0)
 	navIcon.Parent = navButton
 	local navText = label({
 		Text = name,
@@ -2491,10 +2709,13 @@ function Window:SelectTab(tab)
 		other._divider.Visible = false -- колонки теперь карточки, линия между ними не нужна
 		tween(other._nav.button, 0.15, { BackgroundTransparency = active and 0 or 1 })
 		tween(other._nav.text, 0.15, { TextColor3 = active and Theme.TextStrong or Theme.Text })
-		if other._nav.icon:IsA("ImageLabel") then
-			tween(other._nav.icon, 0.15, { ImageColor3 = active and Theme.Accent or Theme.Icon })
+		local navIcon = other._nav.icon
+		if navIcon:IsA("ImageLabel") then
+			tween(navIcon, 0.15, { ImageColor3 = active and Theme.Accent or Theme.Icon })
+		elseif navIcon:IsA("TextLabel") then
+			tween(navIcon, 0.15, { TextColor3 = active and Theme.Accent or Theme.Icon })
 		else
-			tween(other._nav.icon, 0.15, { TextColor3 = active and Theme.Accent or Theme.Icon })
+			paintIcons(navIcon, active and Theme.Accent or Theme.Icon)
 		end
 	end
 	self.CurrentTab = tab
@@ -3763,6 +3984,16 @@ function Window:_buildProfileMenu()
 		Callback = function(value)
 			Library.Settings.Sync = value
 			saveSettings(true) -- при выключении тоже пишем, чтобы файл не включал её снова
+			if value then
+				Library._syncLoaded = true
+				Library:_writeSync(true)
+				window:Notify({
+					Title = "Synchronization",
+					Text = type(writefile) == "function" and "Menu state will be saved and restored on next launch."
+						or "Saving needs writefile (executor). Settings are kept only for this session.",
+					Duration = 4,
+				})
+			end
 		end,
 	})
 	sync.Row.Size = UDim2.new(1, 0, 0, 36)
@@ -4158,6 +4389,18 @@ function Library:CreateWindow(opts)
 
 	table.insert(Library.Windows, window)
 	window:_buildProfileMenu()
+
+	-- Synchronization: раз в 2 секунды пишем изменения; сохранённое восстанавливаем
+	-- через Library:LoadSynced() в конце лоудера (или сами через секунду, если его не вызвали).
+	task.spawn(function()
+		while gui.Parent do
+			task.wait(2)
+			Library:_writeSync()
+		end
+	end)
+	task.delay(1, function()
+		Library:LoadSynced()
+	end)
 	return window
 end
 
