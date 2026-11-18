@@ -576,6 +576,11 @@ function Container:AddDropdown(opts)
 	}, { padding(4), listLayout(0) })
 
 	local optionButtons = {}
+	local listHeight = 10
+
+	local function listWidth()
+		return math.max(field.AbsoluteSize.X, 140)
+	end
 
 	local function isSelected(option)
 		if multi then
@@ -654,8 +659,10 @@ function Container:AddDropdown(opts)
 				fire()
 			end)
 		end
-		local height = math.min(#dropdown.Options * 24 + 8, opts.MaxHeight or 200)
-		list.Size = UDim2.fromOffset(math.max(field.AbsoluteSize.X, 140), height)
+		listHeight = math.min(#dropdown.Options * 24 + 8, opts.MaxHeight or 200)
+		if not window:_isOpen(list) then
+			list.Size = UDim2.fromOffset(listWidth(), listHeight)
+		end
 		render()
 	end
 
@@ -693,11 +700,24 @@ function Container:AddDropdown(opts)
 			window:_closePopup(list)
 			return
 		end
-		list.Size = UDim2.fromOffset(math.max(field.AbsoluteSize.X, 140), list.Size.Y.Offset)
+		list.Size = UDim2.fromOffset(listWidth(), listHeight)
 		tween(arrow, 0.15, { Rotation = 270 })
 		window:_openPopup(list, field, "below", function()
 			tween(arrow, 0.15, { Rotation = 90 })
-		end)
+		end, true)
+		-- пункты появляются по очереди
+		for _, child in ipairs(scroller:GetChildren()) do
+			if child:IsA("TextButton") then
+				local optionLabel = child:FindFirstChildOfClass("TextLabel")
+				if optionLabel then
+					optionLabel.TextTransparency = 1
+					optionLabel.Position = UDim2.fromOffset(14, 0)
+					task.delay(0.02 * (child.LayoutOrder - 1), function()
+						tween(optionLabel, 0.18, { TextTransparency = 0, Position = UDim2.fromOffset(8, 0) })
+					end)
+				end
+			end
+		end
 	end)
 
 	if multi then
@@ -1213,7 +1233,7 @@ function Container:_colorpicker(acc, opts, order)
 		if dragTarget == "sv" then
 			local pos, size = svBox.AbsolutePosition, svBox.AbsoluteSize
 			sat = math.clamp((input.Position.X - pos.X) / size.X, 0, 1)
-			val = 1 - math.clamp((input.Position.Y + GuiService:GetGuiInset().Y - pos.Y) / size.Y, 0, 1)
+			val = 1 - math.clamp((input.Position.Y - pos.Y) / size.Y, 0, 1)
 			render()
 		elseif dragTarget == "hue" then
 			local pos, size = hueBar.AbsolutePosition, hueBar.AbsoluteSize
@@ -1258,7 +1278,8 @@ function Container:_colorpicker(acc, opts, order)
 		if window:_isOpen(popup) then
 			window:_closePopup(popup)
 		else
-			window:_openPopup(popup, swatch, "below")
+			popup.Size = UDim2.fromOffset(200, 202)
+			window:_openPopup(popup, swatch, "below", nil, true)
 		end
 	end)
 
@@ -1393,7 +1414,7 @@ function Window:_closePopup(frame)
 	for i = #self._popups, 1, -1 do
 		local popup = self._popups[i]
 		table.remove(self._popups, i)
-		popup.frame.Visible = false
+		self:_hidePopup(popup)
 		if popup.onClose then
 			popup.onClose()
 		end
@@ -1409,11 +1430,16 @@ function Window:_closeAll()
 	end
 end
 
-function Window:_place(frame, anchor, mode)
-	local screen = self.gui.AbsoluteSize
-	local frameSize = frame.AbsoluteSize
+-- Считает позицию в абсолютных координатах и переводит её в offset слоя popupLayer.
+-- Возвращает true, если панель пришлось открыть вверх.
+function Window:_place(frame, anchor, mode, frameSize)
+	local layerPos, layerSize = self.popupLayer.AbsolutePosition, self.popupLayer.AbsoluteSize
+	frameSize = frameSize or frame.AbsoluteSize
 	local anchorPos, anchorSize = anchor.AbsolutePosition, anchor.AbsoluteSize
+	local minX, minY = layerPos.X + 8, layerPos.Y + 8
+	local maxX, maxY = layerPos.X + layerSize.X - 8, layerPos.Y + layerSize.Y - 8
 	local x, y
+	local flipped = false
 
 	if mode == "side" then
 		local host = self.main
@@ -1423,32 +1449,82 @@ function Window:_place(frame, anchor, mode)
 			end
 		end
 		x = host.AbsolutePosition.X + host.AbsoluteSize.X + 10
-		if x + frameSize.X > screen.X - 8 then
+		if x + frameSize.X > maxX then
 			x = host.AbsolutePosition.X - frameSize.X - 10
 		end
 		y = anchorPos.Y - 12
 	else
 		x = anchorPos.X + anchorSize.X - frameSize.X
 		y = anchorPos.Y + anchorSize.Y + 6
-		if y + frameSize.Y > screen.Y - 8 then
+		if y + frameSize.Y > maxY then
 			y = anchorPos.Y - frameSize.Y - 6
+			flipped = true
 		end
 	end
 
-	x = math.clamp(x, 8, math.max(8, screen.X - frameSize.X - 8))
-	y = math.clamp(y, 8, math.max(8, screen.Y - frameSize.Y - 8))
-	frame.Position = UDim2.fromOffset(x, y)
+	x = math.clamp(x, minX, math.max(minX, maxX - frameSize.X))
+	y = math.clamp(y, minY, math.max(minY, maxY - frameSize.Y))
+	frame.Position = UDim2.fromOffset(x - layerPos.X, y - layerPos.Y)
+	return flipped
 end
 
-function Window:_openPopup(frame, anchor, mode, onClose)
-	table.insert(self._popups, { frame = frame, anchor = anchor, onClose = onClose })
+local POPUP_ANIM_IN, POPUP_ANIM_OUT = 0.2, 0.14
+
+-- animate = true: панель раскрывается по высоте (вниз или вверх) с фейдом обводки.
+function Window:_openPopup(frame, anchor, mode, onClose, animate)
+	local entry = { frame = frame, anchor = anchor, onClose = onClose, animate = animate }
+	table.insert(self._popups, entry)
 	frame.Parent = nil
 	frame.Parent = self.popupLayer -- поверх остальных всплывающих окон
+	frame:SetAttribute("PopupToken", (frame:GetAttribute("PopupToken") or 0) + 1)
 	frame.Visible = true
+
+	if animate then
+		-- перед открытием вызывающий код выставляет frame.Size в полный размер
+		local target = Vector2.new(frame.Size.X.Offset, frame.Size.Y.Offset)
+		frame:SetAttribute("TargetSize", target)
+		frame.ClipsDescendants = true
+		local flipped = self:_place(frame, anchor, mode, target)
+		local finalPosition = frame.Position
+		entry.flipped = flipped
+		entry.finalPosition = finalPosition
+		frame.Size = UDim2.fromOffset(target.X, 0)
+		frame.Position = flipped and finalPosition + UDim2.fromOffset(0, target.Y) or finalPosition
+		local frameStroke = frame:FindFirstChildOfClass("UIStroke")
+		if frameStroke then
+			frameStroke.Transparency = 1
+			tween(frameStroke, POPUP_ANIM_IN, { Transparency = 0.2 })
+		end
+		tween(frame, POPUP_ANIM_IN, { Size = UDim2.fromOffset(target.X, target.Y), Position = finalPosition })
+		return
+	end
+
 	self:_place(frame, anchor, mode)
 	task.defer(function()
 		if self:_isOpen(frame) then
 			self:_place(frame, anchor, mode)
+		end
+	end)
+end
+
+function Window:_hidePopup(entry)
+	local frame = entry.frame
+	if not entry.animate then
+		frame.Visible = false
+		return
+	end
+	local token = frame:GetAttribute("PopupToken")
+	local target = frame:GetAttribute("TargetSize") or Vector2.new(frame.Size.X.Offset, frame.Size.Y.Offset)
+	local closedPosition = entry.flipped and entry.finalPosition + UDim2.fromOffset(0, target.Y) or entry.finalPosition
+	local frameStroke = frame:FindFirstChildOfClass("UIStroke")
+	if frameStroke then
+		tween(frameStroke, POPUP_ANIM_OUT, { Transparency = 1 })
+	end
+	tween(frame, POPUP_ANIM_OUT, { Size = UDim2.fromOffset(target.X, 0), Position = closedPosition })
+	task.delay(POPUP_ANIM_OUT, function()
+		-- если за это время панель открыли снова, не прячем её
+		if frame:GetAttribute("PopupToken") == token and not self:_isOpen(frame) then
+			frame.Visible = false
 		end
 	end)
 end
@@ -1908,7 +1984,8 @@ function Library:CreateWindow(opts)
 	-- Клик мимо всплывающей панели закрывает её.
 	window:_track(UserInputService.InputBegan:Connect(function(input, processed)
 		if isPointer(input) then
-			local point = Vector2.new(input.Position.X, input.Position.Y) + GuiService:GetGuiInset()
+			-- input.Position и AbsolutePosition в одной системе координат (без inset)
+			local point = Vector2.new(input.Position.X, input.Position.Y)
 			for i = #window._popups, 1, -1 do
 				local popup = window._popups[i]
 				if pointIn(popup.frame, point) or (popup.anchor and pointIn(popup.anchor, point)) then
