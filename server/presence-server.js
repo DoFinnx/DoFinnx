@@ -1,13 +1,15 @@
 // Сервер присутствия для Synchronization в Nocturne UI.
-// Хранит в памяти, кто из пользователей скрипта сейчас на каком сервере Roblox (JobId),
-// и каждому отдаёт список остальных на том же сервере.
+// Хранит в памяти, кто из пользователей скрипта сейчас на каком сервере Roblox (JobId)
+// и какую кастомную модель он надел, и каждому отдаёт эти данные об остальных на том же сервере.
 //
 // Запуск: node presence-server.js   (Node.js 18+, без зависимостей)
 // Порт берётся из переменной окружения PORT (так делают Render/Railway и т.п.), по умолчанию 8080.
 //
 // API:
-//   POST /presence  { "userId": 123, "jobId": "...", "placeId": 456 }  ->  { "users": [111, 222] }
-//   POST /leave     { "userId": 123, "jobId": "..." }                  ->  { "ok": true }
+//   POST /presence  { "userId": 123, "jobId": "...", "placeId": 456,
+//                     "model": { "userId": 789, "parts": ["Accessories", "Clothing"] } }   // model — необязательно
+//                -> { "users": [111, 222], "models": { "111": { "userId": 789, "parts": [...] } } }
+//   POST /leave     { "userId": 123, "jobId": "..." }  ->  { "ok": true }
 //   GET  /          -> { "ok": true, "online": N }   (проверка, что сервер жив)
 
 "use strict";
@@ -19,15 +21,16 @@ const TTL_MS = 45_000; // клиент шлёт отметку раз в 15 с; 
 const MAX_SESSIONS = 50_000; // защита от переполнения памяти
 const MAX_USERS_PER_SERVER = 200;
 const MAX_BODY = 2048;
+const MODEL_PARTS = ["Accessories", "Clothing", "Body Colors", "Face"];
 
-/** jobId -> Map(userId -> lastSeen) */
+/** jobId -> Map(userId -> { lastSeen, model }) */
 const sessions = new Map();
 
 function cleanup() {
 	const now = Date.now();
 	for (const [jobId, users] of sessions) {
-		for (const [userId, lastSeen] of users) {
-			if (now - lastSeen > TTL_MS) users.delete(userId);
+		for (const [userId, entry] of users) {
+			if (now - entry.lastSeen > TTL_MS) users.delete(userId);
 		}
 		if (users.size === 0) sessions.delete(jobId);
 	}
@@ -54,6 +57,17 @@ function parseInput(data) {
 	if (!Number.isSafeInteger(userId) || userId <= 0) return null;
 	if (!/^[A-Za-z0-9-]{1,64}$/.test(jobId)) return null;
 	return { userId, jobId };
+}
+
+// Кастомная модель: чей аватар надет и какие части скопированы.
+function parseModel(raw) {
+	if (!raw || typeof raw !== "object") return null;
+	const userId = Number(raw.userId);
+	if (!Number.isSafeInteger(userId) || userId <= 0) return null;
+	const parts = Array.isArray(raw.parts)
+		? [...new Set(raw.parts.filter((part) => MODEL_PARTS.includes(part)))]
+		: MODEL_PARTS.slice();
+	return { userId, parts };
 }
 
 const server = http.createServer((req, res) => {
@@ -101,14 +115,17 @@ const server = http.createServer((req, res) => {
 		if (!users.has(input.userId) && users.size >= MAX_USERS_PER_SERVER) {
 			return send(res, 503, { error: "too many users on this server" });
 		}
-		users.set(input.userId, Date.now());
+		users.set(input.userId, { lastSeen: Date.now(), model: parseModel(data.model) });
 
 		const now = Date.now();
 		const others = [];
-		for (const [userId, lastSeen] of users) {
-			if (userId !== input.userId && now - lastSeen <= TTL_MS) others.push(userId);
+		const models = {};
+		for (const [userId, entry] of users) {
+			if (userId === input.userId || now - entry.lastSeen > TTL_MS) continue;
+			others.push(userId);
+			if (entry.model) models[String(userId)] = entry.model;
 		}
-		send(res, 200, { users: others });
+		send(res, 200, { users: others, models });
 	});
 });
 
