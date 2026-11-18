@@ -18,13 +18,66 @@ local Stats = game:GetService("Stats")
 local LocalPlayer = Players.LocalPlayer
 
 local Library = {
-	Version = "1.4.0",
+	Version = "1.5.0",
 	Flags = {},
 	Windows = {},
 	Keybinds = {},
 	-- Можно переопределить под конкретную игру: function() return { Player, ... } end
 	GetSpectators = nil,
+	NotificationsEnabled = true,
+	-- Настройки из меню профиля (сохраняются при включённой Synchronization).
+	Settings = {
+		Language = "English",
+		MenuScale = "Auto",
+		ESPScale = "Auto",
+		WindowsScale = "Auto",
+		Units = "Auto",
+		Accent = nil,
+		SafeMode = false,
+		SafeModeText = "Disabled",
+		Sync = false,
+	},
+	Translations = {
+		English = {},
+		Russian = {
+			Search = "Поиск",
+			Language = "Язык",
+			["Menu Scale"] = "Масштаб меню",
+			["ESP Scale"] = "Масштаб ESP",
+			["Windows Scale"] = "Масштаб окон",
+			Units = "Единицы",
+			Style = "Стиль",
+			["Safe Mode"] = "Безопасный режим",
+			Synchronization = "Синхронизация",
+			About = "О меню",
+			Chat = "Чат",
+			Renew = "Продлить",
+			Auto = "Авто",
+			Studs = "Студы",
+			Meters = "Метры",
+			Disabled = "Выключен",
+			Enabled = "Включено",
+			English = "English",
+			Russian = "Русский",
+			Hotkeys = "Клавиши",
+			Spectators = "Наблюдатели",
+			Hidden = "Скрыто",
+			["Menu preview"] = "Предпросмотр меню",
+			["Accent Presets"] = "Цвет акцента",
+			Blue = "Синий",
+			Purple = "Фиолетовый",
+			Pink = "Розовый",
+			Red = "Красный",
+			Orange = "Оранжевый",
+			Green = "Зелёный",
+		},
+	},
+	_translatables = {},
+	_languageListeners = {},
 }
+
+local HttpService = game:GetService("HttpService")
+local SETTINGS_FILE = "nocturne_settings.json"
 
 -- Токены из макета (дубли цветов сведены в один).
 local Theme = {
@@ -251,6 +304,112 @@ end
 -- Container: общие методы для секций вкладок и всплывающих панелей
 ----------------------------------------------------------------------
 
+----------------------------------------------------------------------
+-- Язык: переводы подписей
+----------------------------------------------------------------------
+
+-- string.upper/lower не понимают кириллицу, поэтому меняем регистр по кодовым точкам UTF-8.
+local function utf8Map(text, mapper)
+	local ok, result = pcall(function()
+		local out = {}
+		for _, code in utf8.codes(text) do
+			table.insert(out, utf8.char(mapper(code)))
+		end
+		return table.concat(out)
+	end)
+	return ok and result or text
+end
+
+local function upper(text)
+	return utf8Map(text, function(code)
+		if (code >= 97 and code <= 122) or (code >= 0x430 and code <= 0x44F) then
+			return code - 32
+		elseif code == 0x451 then
+			return 0x401
+		end
+		return code
+	end)
+end
+
+local function lower(text)
+	return utf8Map(text, function(code)
+		if (code >= 65 and code <= 90) or (code >= 0x410 and code <= 0x42F) then
+			return code + 32
+		elseif code == 0x401 then
+			return 0x451
+		end
+		return code
+	end)
+end
+
+local function translate(key)
+	if key == nil then
+		return ""
+	end
+	local dictionary = Library.Translations[Library.Settings.Language]
+	return (dictionary and dictionary[key]) or key
+end
+
+function Library:Translate(key)
+	return translate(key)
+end
+
+local function applyTranslation(entry)
+	local text = translate(entry.key)
+	if entry.upper then
+		text = upper(text)
+	end
+	entry.inst[entry.prop] = text
+end
+
+-- Регистрирует подпись, которая будет переводиться при смене языка.
+local function tr(inst, key, isUpper, prop)
+	if type(key) ~= "string" or key == "" then
+		return inst
+	end
+	local entry = { inst = inst, key = key, upper = isUpper, prop = prop or "Text" }
+	table.insert(Library._translatables, entry)
+	applyTranslation(entry)
+	return inst
+end
+
+local function saveSettings(force)
+	if not (Library.Settings.Sync or force) or type(writefile) ~= "function" then
+		return
+	end
+	pcall(function()
+		writefile(SETTINGS_FILE, HttpService:JSONEncode(Library.Settings))
+	end)
+end
+
+local function loadSavedSettings()
+	if type(isfile) ~= "function" or type(readfile) ~= "function" then
+		return nil
+	end
+	local ok, data = pcall(function()
+		if isfile(SETTINGS_FILE) then
+			return HttpService:JSONDecode(readfile(SETTINGS_FILE))
+		end
+		return nil
+	end)
+	if ok and type(data) == "table" and data.Sync then
+		return data
+	end
+	return nil
+end
+
+-- "Auto" | "90%" -> число
+local function parseScale(option)
+	if option == "Auto" then
+		local camera = workspace.CurrentCamera
+		-- 1080p = 100%, меньше экран — меньше меню
+		local height = camera and camera.ViewportSize.Y or 1080
+		return math.clamp(math.floor(height / 1080 * 20 + 0.5) / 20, 0.75, 1.25)
+	end
+	local percent = tonumber(tostring(option):match("%d+"))
+	return percent and percent / 100 or 1
+end
+
 local Container = {}
 Container.__index = Container
 
@@ -293,13 +452,15 @@ function Container:_row(name, height, labelOffset)
 	}, { listLayout(8, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center) })
 
 	local function fit()
-		text.Size = UDim2.new(1, -(labelOffset + acc.AbsoluteSize.X + 10), 1, 0)
+		local scale = self.window._menuScale or 1
+		text.Size = UDim2.new(1, -(labelOffset + acc.AbsoluteSize.X / scale + 10), 1, 0)
 	end
 	self:_track(acc:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit))
 	fit()
+	tr(text, name)
 
 	if self.tab then
-		table.insert(self.tab.rows, { frame = row, name = string.lower(name) })
+		table.insert(self.tab.rows, { frame = row, name = string.lower(name), label = text })
 	end
 	return row, text, acc
 end
@@ -329,7 +490,7 @@ function Container:AddToggle(opts)
 	opts = opts or {}
 	local name = opts.Name or "Toggle"
 	local row, text, acc = self:_row(name)
-	local toggle = { Type = "Toggle", Name = name, Value = opts.Default == true }
+	local toggle = { Type = "Toggle", Name = name, Value = opts.Default == true, Row = row, Label = text }
 
 	local track = create("Frame", {
 		Size = UDim2.fromOffset(30, 17),
@@ -644,6 +805,7 @@ function Container:AddDropdown(opts)
 		Parent = window.popupLayer,
 	}, { corner(6), stroke(Theme.Stroke, 0.2, 1) })
 	sink(list)
+	window:_scaleTarget(list)
 	local scroller = create("ScrollingFrame", {
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
@@ -659,7 +821,7 @@ function Container:AddDropdown(opts)
 	local listHeight = 10
 
 	local function listWidth()
-		return math.max(field.AbsoluteSize.X, 140)
+		return math.max(field.AbsoluteSize.X / (window._menuScale or 1), 140)
 	end
 
 	local function isSelected(option)
@@ -828,7 +990,7 @@ function Container:AddChips(opts)
 			LayoutOrder = self:_nextOrder(),
 			Parent = self.holder,
 		})
-		label({ Text = opts.Name, TextSize = TEXT_SM, TextColor3 = Theme.TextStrong, Font = FONT_MEDIUM, Size = UDim2.fromScale(1, 1), Parent = header })
+		tr(label({ Text = opts.Name, TextSize = TEXT_SM, TextColor3 = Theme.TextStrong, Font = FONT_MEDIUM, Size = UDim2.fromScale(1, 1), Parent = header }), opts.Name)
 	end
 
 	local box = create("Frame", {
@@ -851,7 +1013,7 @@ function Container:AddChips(opts)
 	local views = {}
 
 	local function layoutChips()
-		local width = box.AbsoluteSize.X
+		local width = box.AbsoluteSize.X / (self.window._menuScale or 1)
 		local x, y = 0, 0
 		for _, view in ipairs(views) do
 			local w = view.button.Size.X.Offset
@@ -963,6 +1125,7 @@ function Container:AddButton(opts)
 		BackgroundColor3 = Theme.Field,
 		Parent = row,
 	}, { corner(6), stroke(Theme.Stroke, 0.3, 1) })
+	tr(buttonFrame, name)
 
 	buttonFrame.MouseEnter:Connect(function()
 		tween(buttonFrame, 0.12, { BackgroundColor3 = Theme.FieldHover })
@@ -1272,6 +1435,7 @@ function Container:_colorpicker(acc, opts, order)
 		Parent = window.popupLayer,
 	}, { corner(10), stroke(Theme.Stroke, 0.3, 1) })
 	sink(popup)
+	window:_scaleTarget(popup)
 
 	local svBox = create("Frame", {
 		Position = UDim2.fromOffset(12, 12),
@@ -1445,7 +1609,7 @@ function Tab:AddSection(opts)
 		divider({ Position = UDim2.fromOffset(0, 8), Parent = gap })
 	end
 	if opts.Name then
-		label({
+		tr(label({
 			Text = string.upper(opts.Name),
 			Font = FONT_MEDIUM,
 			TextSize = TEXT_XS,
@@ -1453,7 +1617,7 @@ function Tab:AddSection(opts)
 			Size = UDim2.new(1, 0, 0, 24),
 			LayoutOrder = 1,
 			Parent = frame,
-		})
+		}), opts.Name, true)
 	end
 	local holder = create("Frame", {
 		Name = "Items",
@@ -1491,7 +1655,8 @@ function Window:_panel(title)
 		Parent = self.popupLayer,
 	}, { corner(10), stroke(Theme.Stroke, 0.3, 1) })
 	sink(frame)
-	label({
+	self:_scaleTarget(frame)
+	tr(label({
 		Text = title,
 		Font = FONT_BOLD,
 		TextSize = TEXT_MD,
@@ -1499,7 +1664,7 @@ function Window:_panel(title)
 		Position = UDim2.fromOffset(14, 0),
 		Size = UDim2.new(1, -28, 0, 38),
 		Parent = frame,
-	})
+	}), title)
 	local holder = create("Frame", {
 		Name = "Items",
 		BackgroundTransparency = 1,
@@ -1514,7 +1679,7 @@ function Window:_panel(title)
 
 	-- fullSize хранится отдельно: после анимации закрытия frame.Size по высоте равен 0.
 	local function resize()
-		local height = layout.AbsoluteContentSize.Y
+		local height = layout.AbsoluteContentSize.Y / (self._menuScale or 1)
 		holder.Size = UDim2.new(1, -28, 0, height)
 		panel.fullSize = UDim2.fromOffset(PANEL_WIDTH, 36 + height + 10)
 		frame.Size = panel.fullSize
@@ -1581,6 +1746,11 @@ function Window:_place(frame, anchor, mode, frameSize)
 			x = host.AbsolutePosition.X - frameSize.X - 10
 		end
 		y = anchorPos.Y - 12
+	elseif mode == "up-right" then
+		-- справа от anchor, нижние края совпадают; раскрывается вверх
+		x = anchorPos.X + anchorSize.X + 10
+		y = anchorPos.Y + anchorSize.Y - frameSize.Y
+		flipped = true
 	elseif mode == "attach" then
 		-- под строкой, к которой относится anchor (строка лежит прямо в контейнере "Items")
 		local row = anchor
@@ -1628,7 +1798,7 @@ function Window:_openPopup(frame, anchor, mode, onClose, animate)
 		local target = Vector2.new(frame.Size.X.Offset, frame.Size.Y.Offset)
 		frame:SetAttribute("TargetSize", target)
 		frame.ClipsDescendants = true
-		local flipped = self:_place(frame, anchor, mode, target)
+		local flipped = self:_place(frame, anchor, mode, target * (self._menuScale or 1))
 		local finalPosition = frame.Position
 		entry.flipped = flipped
 		entry.finalPosition = finalPosition
@@ -1675,7 +1845,7 @@ end
 
 function Window:AddCategory(name)
 	self._navOrder += 1
-	label({
+	tr(label({
 		Text = string.upper(name),
 		Font = FONT_MEDIUM,
 		TextSize = TEXT_XS,
@@ -1684,7 +1854,7 @@ function Window:AddCategory(name)
 		TextYAlignment = Enum.TextYAlignment.Bottom,
 		LayoutOrder = self._navOrder,
 		Parent = self.nav,
-	})
+	}), name, true)
 end
 
 function Window:AddTab(opts)
@@ -1717,6 +1887,7 @@ function Window:AddTab(opts)
 		Size = UDim2.new(1, -40, 1, 0),
 		Parent = navButton,
 	})
+	tr(navText, name)
 	tab._nav = { button = navButton, icon = navIcon, text = navText }
 
 	navButton.MouseEnter:Connect(function()
@@ -1798,7 +1969,7 @@ function Window:SelectTab(tab)
 		end
 	end
 	self.CurrentTab = tab
-	self.toolbarTitle.Text = tab.Name
+	self.toolbarTitle.Text = translate(tab.Name)
 	if self.searchBox.Text ~= "" then
 		self.searchBox.Text = ""
 	end
@@ -1810,9 +1981,11 @@ function Window:_filter(query)
 	if not tab then
 		return
 	end
-	query = string.lower(query or "")
+	query = lower(query or "")
 	for _, entry in ipairs(tab.rows) do
-		local visible = query == "" or string.find(entry.name, query, 1, true) ~= nil
+		local visible = query == ""
+			or string.find(entry.name, query, 1, true) ~= nil
+			or (entry.label ~= nil and string.find(lower(entry.label.Text), query, 1, true) ~= nil)
 		entry.frame.Visible = visible
 		if entry.extra then
 			entry.extra.Visible = visible
@@ -1834,6 +2007,11 @@ end
 
 function Window:Notify(opts)
 	opts = opts or {}
+	if not Library.NotificationsEnabled and not opts.Force then
+		return
+	end
+	opts.Title = opts.Title and translate(opts.Title) or nil
+	opts.Text = opts.Text and translate(opts.Text) or nil
 	local holder = create("Frame", {
 		BackgroundTransparency = 1,
 		Size = UDim2.fromOffset(280, 0),
@@ -2252,10 +2430,11 @@ function Window:CreateWatermark(opts)
 	avatarStroke.Parent = avatar
 
 	self:_draggable(frame)
+	self:_widgetScaleTarget(frame)
 
 	local function valueFor(item, state)
 		if item == "Name" then
-			return LocalPlayer.Name
+			return Library.Settings.SafeMode and upper(translate("Hidden")) or LocalPlayer.Name
 		elseif item == "Framerate" then
 			return tostring(state.fps) .. " FPS"
 		elseif item == "Latency" then
@@ -2263,7 +2442,14 @@ function Window:CreateWatermark(opts)
 			return ping and (ping .. " MS") or nil
 		elseif item == "Speed" then
 			local speed = getSpeed()
-			return speed and (speed .. " ST/S") or nil
+			if not speed then
+				return nil
+			end
+			-- 1 стад ≈ 0.28 м
+			if Library.Settings.Units == "Meters" then
+				return string.format("%.1f M/S", speed * 0.28)
+			end
+			return speed .. " ST/S"
 		elseif item == "Memory" then
 			local memory = getMemory()
 			return memory and (memory .. " MB") or nil
@@ -2296,7 +2482,7 @@ function Window:CreateWatermark(opts)
 			end
 		end
 		logo.Visible = table.find(self.Items, "Logo") ~= nil
-		avatar.Visible = self.Avatar
+		avatar.Visible = self.Avatar and not Library.Settings.SafeMode
 		frame.Visible = self.Visible and (anyShown or logo.Visible or avatar.Visible)
 	end
 
@@ -2392,6 +2578,8 @@ function Window:_listWidget(name, title, position, headerIcon)
 		Parent = frame,
 	}, { padding(14, 0, 14, 10), listLayout(2) })
 	self:_draggable(frame)
+	self:_widgetScaleTarget(frame)
+	tr(titleLabel, title)
 
 	local function compact()
 		return widget.Style == "Compact"
@@ -2447,7 +2635,7 @@ function Window:_listWidget(name, title, position, headerIcon)
 				}, { corner(10) })
 				local imageStroke = stroke(widget.Accent, 0.4, 1)
 				imageStroke.Parent = image
-			else
+			elseif entry.Icon ~= "none" then
 				drawSwitch(row, markerOrder, entry.Icon or "toggle")
 			end
 			label({
@@ -2527,11 +2715,11 @@ function Window:CreateHotkeyList(opts)
 			if keybind.Window == window and keybind.Target and keybind.Value then
 				if keybind:IsActive() then
 					table.insert(entries, {
-						Name = keybind.Target.Name,
+						Name = translate(keybind.Target.Name),
 						Icon = keybind.Mode == "Hold" and "hold" or "toggle",
 					})
 				elseif self.ShowAll then
-					table.insert(entries, { Name = keybind.Target.Name, Icon = "off", Dim = true })
+					table.insert(entries, { Name = translate(keybind.Target.Name), Icon = "off", Dim = true })
 				end
 			end
 		end
@@ -2555,16 +2743,585 @@ function Window:CreateSpectatorList(opts)
 		local entries = {}
 		for _, player in ipairs(players) do
 			if typeof(player) == "Instance" and player:IsA("Player") then
-				table.insert(entries, {
-					Name = player.DisplayName,
-					Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(player.UserId) .. "&w=48&h=48",
-				})
+				if Library.Settings.SafeMode then
+					table.insert(entries, { Name = translate("Hidden") .. " " .. #entries + 1, Icon = "none" })
+				else
+					table.insert(entries, {
+						Name = player.DisplayName,
+						Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(player.UserId) .. "&w=48&h=48",
+					})
+				end
 			end
 		end
 		self:SetEntries(entries, state)
 	end
 
 	return widget
+end
+
+----------------------------------------------------------------------
+-- Масштаб, язык, акцент, безопасный режим
+----------------------------------------------------------------------
+
+function Window:_scaleTarget(frame)
+	local scale = create("UIScale", { Scale = self._menuScale or 1, Parent = frame })
+	table.insert(self._menuScales, scale)
+	return scale
+end
+
+function Window:_widgetScaleTarget(frame)
+	local scale = create("UIScale", { Scale = self._widgetScale or 1, Parent = frame })
+	table.insert(self._widgetScales, scale)
+	return scale
+end
+
+function Window:SetMenuScale(option)
+	Library.Settings.MenuScale = option
+	self:_closeAll()
+	self._menuScale = parseScale(option)
+	for _, scale in ipairs(self._menuScales) do
+		scale.Scale = self._menuScale
+	end
+	saveSettings()
+end
+
+function Window:SetWidgetScale(option)
+	Library.Settings.WindowsScale = option
+	self._widgetScale = parseScale(option)
+	for _, scale in ipairs(self._widgetScales) do
+		scale.Scale = self._widgetScale
+	end
+	saveSettings()
+end
+
+function Library:SetLanguage(language)
+	if not self.Translations[language] then
+		language = "English"
+	end
+	self.Settings.Language = language
+	local alive = {}
+	for _, entry in ipairs(self._translatables) do
+		if entry.inst.Parent then
+			applyTranslation(entry)
+			table.insert(alive, entry)
+		end
+	end
+	self._translatables = alive
+	for _, window in ipairs(self.Windows) do
+		if window.CurrentTab then
+			window.toolbarTitle.Text = translate(window.CurrentTab.Name)
+		end
+		for _, widget in ipairs(window._widgets) do
+			widget._signature = nil
+		end
+	end
+	for _, listener in ipairs(self._languageListeners) do
+		pcall(listener, language)
+	end
+	saveSettings()
+end
+
+-- Перекрашивает всё, что было цветом старого акцента.
+function Library:SetAccent(color)
+	local old = Theme.Accent
+	self.Settings.Accent = color:ToHex()
+	if old == color then
+		return
+	end
+	Theme.Accent = color
+	for _, window in ipairs(self.Windows) do
+		for _, item in ipairs(window.gui:GetDescendants()) do
+			if item:IsA("GuiObject") and item.BackgroundColor3 == old then
+				item.BackgroundColor3 = color
+			end
+			if (item:IsA("TextLabel") or item:IsA("TextButton") or item:IsA("TextBox")) and item.TextColor3 == old then
+				item.TextColor3 = color
+			end
+			if item:IsA("UIStroke") and item.Color == old then
+				item.Color = color
+			end
+		end
+	end
+	saveSettings()
+end
+
+-- Безопасный режим: скрывает имена и аватары (свой ник, наблюдатели, аватары).
+function Library:SetSafeMode(enabled)
+	self.Settings.SafeMode = enabled == true
+	for _, window in ipairs(self.Windows) do
+		if window._footerName then
+			window._footerName.Text = enabled and translate("Hidden") or LocalPlayer.DisplayName
+			window._footerAvatar.Visible = not enabled
+		end
+		if window._profileName then
+			window._profileName.Text = enabled and translate("Hidden") or LocalPlayer.DisplayName
+			window._profileAvatar.Visible = not enabled
+		end
+		for _, widget in ipairs(window._widgets) do
+			widget._signature = nil
+		end
+	end
+	saveSettings()
+end
+
+----------------------------------------------------------------------
+-- Иконки меню профиля
+----------------------------------------------------------------------
+
+IconDrawers.globe = function(f)
+	iconRing(f, 0.5, 0.5, 11, 11, 1.4)
+	iconRing(f, 3.5, 0.5, 5, 11, 1.2, 2)
+	iconPart(f, 0.5, 5.3, 11, 1.4, 0)
+end
+IconDrawers.scale = function(f)
+	iconRing(f, 0.5, 4, 7.5, 7.5, 1.4, 2)
+	iconPart(f, 6.5, 0.5, 5, 1.4, 0)
+	iconPart(f, 10.1, 0.5, 1.4, 5, 0)
+end
+IconDrawers.text = function(f)
+	label({
+		Text = "Tt",
+		Font = FONT_BOLD,
+		TextSize = 12,
+		TextColor3 = Theme.Text,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Size = UDim2.fromScale(1, 1),
+		Parent = f,
+	})
+end
+IconDrawers.windows = function(f)
+	iconRing(f, 3.5, 0.5, 8, 8, 1.4, 2)
+	iconPart(f, 0.5, 3.5, 8, 8, 2)
+end
+IconDrawers.ruler = function(f)
+	iconPart(f, 0.5, 0.5, 1.6, 11, 0)
+	iconPart(f, 0.5, 9.9, 11, 1.6, 0)
+	iconPart(f, 4, 7, 1.3, 3, 0)
+	iconPart(f, 7.5, 7, 1.3, 3, 0)
+end
+IconDrawers.bucket = function(f)
+	iconPart(f, 1.5, 2, 7, 7, 1.5).Rotation = 45
+	iconPart(f, 9.5, 6.5, 2.5, 4.5, 1.2)
+end
+IconDrawers.shield = function(f)
+	iconPart(f, 1.5, 0.5, 9, 6.5, 2)
+	iconPart(f, 3, 4, 6, 6, 1.5).Rotation = 45
+end
+IconDrawers.cast = function(f)
+	iconRing(f, 0.5, 1, 11, 8.5, 1.4, 2)
+	iconPart(f, 0, 8.5, 3.5, 3.5, 1.5)
+end
+IconDrawers.info = function(f)
+	iconRing(f, 0.5, 0.5, 11, 11, 1.4)
+	iconPart(f, 5.3, 5, 1.4, 4, 0.7)
+	iconPart(f, 5.3, 2.7, 1.4, 1.4, 0.7)
+end
+IconDrawers.chat = function(f)
+	iconPart(f, 0, 0.5, 8.5, 6.5, 2.5)
+	iconRing(f, 3.5, 4.5, 8, 6.5, 1.4, 2.5)
+end
+IconDrawers.gear = function(f)
+	iconRing(f, 2.5, 2.5, 7, 7, 1.8)
+	iconPart(f, 5.1, 0, 1.8, 2.5, 0)
+	iconPart(f, 5.1, 9.5, 1.8, 2.5, 0)
+	iconPart(f, 0, 5.1, 2.5, 1.8, 0)
+	iconPart(f, 9.5, 5.1, 2.5, 1.8, 0)
+end
+
+----------------------------------------------------------------------
+-- Список вариантов (для пунктов меню профиля)
+----------------------------------------------------------------------
+
+function Window:_optionPopup(options, getCurrent, onPick, width)
+	local window = self
+	local frame = create("Frame", {
+		Name = "Options",
+		Visible = false,
+		BackgroundColor3 = Theme.Field,
+		Size = UDim2.fromOffset(width or 150, #options * 26 + 8),
+		Parent = self.popupLayer,
+	}, { corner(8), stroke(Theme.Stroke, 0.2, 1) })
+	sink(frame)
+	self:_scaleTarget(frame)
+	local inner = create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Parent = frame,
+	}, { padding(4), listLayout(0) })
+
+	local labels = {}
+	local function refresh()
+		local current = getCurrent()
+		for option, optionLabel in pairs(labels) do
+			optionLabel.Text = translate(option)
+			optionLabel.TextColor3 = option == current and Theme.Accent or Theme.Text
+		end
+	end
+
+	for index, option in ipairs(options) do
+		local button = create("TextButton", {
+			Text = "",
+			AutoButtonColor = false,
+			BackgroundColor3 = Theme.FieldHover,
+			BackgroundTransparency = 1,
+			Size = UDim2.new(1, 0, 0, 26),
+			LayoutOrder = index,
+			Parent = inner,
+		}, { corner(5) })
+		labels[option] = label({
+			TextSize = TEXT_SM,
+			Position = UDim2.fromOffset(8, 0),
+			Size = UDim2.new(1, -16, 1, 0),
+			Parent = button,
+		})
+		button.MouseEnter:Connect(function()
+			tween(button, 0.1, { BackgroundTransparency = 0 })
+		end)
+		button.MouseLeave:Connect(function()
+			tween(button, 0.1, { BackgroundTransparency = 1 })
+		end)
+		button.MouseButton1Click:Connect(function()
+			window:_closePopup(frame)
+			onPick(option)
+			refresh()
+		end)
+	end
+	refresh()
+	table.insert(Library._languageListeners, refresh)
+
+	local fullSize = frame.Size
+	return {
+		Frame = frame,
+		Refresh = refresh,
+		Toggle = function(anchor)
+			if window:_isOpen(frame) then
+				window:_closePopup(frame)
+				return
+			end
+			refresh()
+			frame.Size = fullSize
+			window:_openPopup(frame, anchor, "below", nil, true)
+		end,
+	}
+end
+
+----------------------------------------------------------------------
+-- Меню профиля (по клику на карточку игрока внизу сайдбара)
+----------------------------------------------------------------------
+
+local SCALE_OPTIONS = { "Auto", "75%", "90%", "100%", "110%", "125%" }
+local ACCENT_PRESETS = {
+	{ "Blue", Color3.fromRGB(100, 133, 247) },
+	{ "Purple", Color3.fromRGB(150, 110, 245) },
+	{ "Pink", Color3.fromRGB(236, 96, 160) },
+	{ "Red", Color3.fromRGB(232, 84, 96) },
+	{ "Orange", Color3.fromRGB(240, 150, 70) },
+	{ "Green", Color3.fromRGB(88, 196, 128) },
+}
+local PROFILE_WIDTH = 300
+
+function Window:_buildProfileMenu()
+	local window = self
+	local opts = self._opts or {}
+
+	local frame = create("Frame", {
+		Name = "ProfileMenu",
+		Visible = false,
+		BackgroundColor3 = Theme.Panel,
+		Size = UDim2.fromOffset(PROFILE_WIDTH, 120),
+		Parent = self.popupLayer,
+	}, { corner(12), stroke(Theme.Stroke, 0.3, 1) })
+	sink(frame)
+	self:_scaleTarget(frame)
+	self._profileMenu = frame
+
+	-- Шапка: аватар, имя, статус, «Renew»
+	local head = create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 78), Parent = frame })
+	self._profileAvatar = create("ImageLabel", {
+		BackgroundColor3 = Theme.NavActive,
+		Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(LocalPlayer.UserId) .. "&w=100&h=100",
+		Position = UDim2.fromOffset(16, 16),
+		Size = UDim2.fromOffset(46, 46),
+		Parent = head,
+	}, { corner(23), stroke(Theme.Accent, 0.3, 1.5) })
+	self._profileName = label({
+		Text = LocalPlayer.DisplayName,
+		Font = FONT_BOLD,
+		TextSize = TEXT_LG,
+		TextColor3 = Theme.Title,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Position = UDim2.fromOffset(76, 14),
+		Size = UDim2.new(1, -92, 0, 18),
+		Parent = head,
+	})
+	label({
+		Text = opts.Status or "Free preview",
+		TextSize = TEXT_SM,
+		TextColor3 = Theme.TextStrong,
+		Position = UDim2.fromOffset(76, 33),
+		Size = UDim2.new(1, -92, 0, 16),
+		Parent = head,
+	})
+	local renew = create("TextButton", {
+		Text = "",
+		AutoButtonColor = false,
+		BackgroundTransparency = 1,
+		Font = FONT_MEDIUM,
+		TextSize = TEXT_SM,
+		TextColor3 = Theme.Accent,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Position = UDim2.fromOffset(76, 50),
+		Size = UDim2.fromOffset(0, 16),
+		AutomaticSize = Enum.AutomaticSize.X,
+		Parent = head,
+	})
+	tr(renew, "Renew")
+	renew.MouseButton1Click:Connect(function()
+		window:_closeAll()
+		if opts.OnRenew then
+			safeCall(opts.OnRenew)
+		else
+			window:Notify({ Title = "Renew", Text = "Renewal is not available in the menu preview.", Duration = 3 })
+		end
+	end)
+	divider({ Position = UDim2.fromOffset(12, 78), Size = UDim2.new(1, -24, 0, 1), Parent = frame })
+
+	local holder = create("Frame", {
+		Name = "Items",
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(8, 84),
+		Size = UDim2.new(1, -16, 0, 0),
+		Parent = frame,
+	})
+	local layout = listLayout(0)
+	layout.Parent = holder
+	local menu = setmetatable({ window = self, holder = holder, _order = 0 }, Container)
+
+	local function resize()
+		local height = layout.AbsoluteContentSize.Y / (self._menuScale or 1)
+		holder.Size = UDim2.new(1, -16, 0, height)
+		window._profileFullSize = UDim2.fromOffset(PROFILE_WIDTH, 84 + height + 8)
+		if not window:_isOpen(frame) then
+			frame.Size = window._profileFullSize
+		end
+	end
+	self:_track(layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize))
+
+	-- Строка с иконкой и подсветкой при наведении.
+	local function itemRow(iconName, key)
+		local row, text, acc = menu:_row(key, 36, 36)
+		row.BackgroundColor3 = Theme.NavActive
+		corner(8).Parent = row
+		text.TextColor3 = Theme.TextStrong
+		acc.Position = UDim2.new(1, -10, 0.5, 0)
+		local rowIcon = drawIcon(iconName, row)
+		rowIcon.AnchorPoint = Vector2.new(0, 0.5)
+		rowIcon.Position = UDim2.new(0, 12, 0.5, 0)
+		create("UIScale", { Scale = 1.2, Parent = rowIcon })
+		paintIcons(rowIcon, Theme.Text)
+		local hit = hitbox({ Parent = row })
+		hit.MouseEnter:Connect(function()
+			tween(row, 0.1, { BackgroundTransparency = 0.4 })
+		end)
+		hit.MouseLeave:Connect(function()
+			tween(row, 0.1, { BackgroundTransparency = 1 })
+		end)
+		return row, text, acc, hit
+	end
+
+	local function rowDivider()
+		local gap = create("Frame", {
+			BackgroundTransparency = 1,
+			Size = UDim2.new(1, 0, 0, 9),
+			LayoutOrder = menu:_nextOrder(),
+			Parent = holder,
+		})
+		divider({ Position = UDim2.fromOffset(6, 4), Size = UDim2.new(1, -12, 0, 1), Parent = gap })
+	end
+
+	-- Пункт со значением и «›»: открывает список вариантов.
+	local choices = {}
+	local function choiceRow(iconName, key, settingKey, options, onPick)
+		local row, _, acc, hit = itemRow(iconName, key)
+		local valueLabel = label({
+			TextSize = TEXT_MD,
+			TextColor3 = Theme.TextStrong,
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.fromOffset(0, 18),
+			LayoutOrder = 999,
+			Parent = acc,
+		})
+		chevron({ TextColor3 = Theme.Text, LayoutOrder = 1000, Parent = acc })
+		local function show()
+			valueLabel.Text = translate(Library.Settings[settingKey])
+		end
+		local popup = window:_optionPopup(options, function()
+			return Library.Settings[settingKey]
+		end, function(option)
+			onPick(option)
+			show()
+		end)
+		hit.MouseButton1Click:Connect(function()
+			popup.Toggle(row)
+		end)
+		table.insert(Library._languageListeners, show)
+		show()
+		choices[settingKey] = show
+		return row
+	end
+
+	choiceRow("globe", "Language", "Language", { "English", "Russian" }, function(option)
+		Library:SetLanguage(option)
+	end)
+	choiceRow("scale", "Menu Scale", "MenuScale", SCALE_OPTIONS, function(option)
+		window:SetMenuScale(option)
+	end)
+	choiceRow("text", "ESP Scale", "ESPScale", SCALE_OPTIONS, function(option)
+		Library.Settings.ESPScale = option
+		saveSettings()
+		safeCall(opts.OnESPScale, parseScale(option))
+	end)
+	choiceRow("windows", "Windows Scale", "WindowsScale", SCALE_OPTIONS, function(option)
+		window:SetWidgetScale(option)
+	end)
+	choiceRow("ruler", "Units", "Units", { "Auto", "Studs", "Meters" }, function(option)
+		Library.Settings.Units = option
+		saveSettings()
+	end)
+
+	-- Style: шестерёнка — пресеты цвета, квадрат — свой цвет.
+	local _, _, styleAcc = itemRow("bucket", "Style")
+	local gear = create("TextButton", {
+		Text = "",
+		AutoButtonColor = false,
+		BackgroundTransparency = 1,
+		Size = UDim2.fromOffset(18, 18),
+		LayoutOrder = 1,
+		Parent = styleAcc,
+	})
+	local gearIcon = drawIcon("gear", gear)
+	gearIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+	gearIcon.Position = UDim2.fromScale(0.5, 0.5)
+	create("UIScale", { Scale = 1.3, Parent = gearIcon })
+	paintIcons(gearIcon, Theme.Text)
+	local accentPicker = menu:_colorpicker(styleAcc, {
+		Default = Theme.Accent,
+		Callback = function(color)
+			Library:SetAccent(color)
+		end,
+	}, 2)
+	local presetNames = {}
+	for _, preset in ipairs(ACCENT_PRESETS) do
+		table.insert(presetNames, preset[1])
+	end
+	local currentPreset = "Blue"
+	local presetPopup = window:_optionPopup(presetNames, function()
+		return currentPreset
+	end, function(name)
+		currentPreset = name
+		for _, preset in ipairs(ACCENT_PRESETS) do
+			if preset[1] == name then
+				accentPicker:Set(preset[2])
+			end
+		end
+	end, 140)
+	gear.MouseButton1Click:Connect(function()
+		presetPopup.Toggle(gear)
+	end)
+
+	rowDivider()
+	choiceRow("shield", "Safe Mode", "SafeModeText", { "Disabled", "Enabled" }, function(option)
+		Library.Settings.SafeModeText = option
+		Library:SetSafeMode(option == "Enabled")
+	end)
+
+	local sync = menu:AddToggle({
+		Name = "Synchronization",
+		Default = Library.Settings.Sync,
+		Callback = function(value)
+			Library.Settings.Sync = value
+			saveSettings(true) -- при выключении тоже пишем, чтобы файл не включал её снова
+		end,
+	})
+	sync.Row.Size = UDim2.new(1, 0, 0, 36)
+	sync.Label.Position = UDim2.fromOffset(36, 0)
+	sync.Label.TextColor3 = Theme.TextStrong
+	local syncIcon = drawIcon("cast", sync.Row)
+	syncIcon.AnchorPoint = Vector2.new(0, 0.5)
+	syncIcon.Position = UDim2.new(0, 12, 0.5, 0)
+	create("UIScale", { Scale = 1.2, Parent = syncIcon })
+	paintIcons(syncIcon, Theme.Text)
+	local syncControls = sync.Row:FindFirstChild("Controls")
+	if syncControls then
+		syncControls.Position = UDim2.new(1, -10, 0.5, 0)
+	end
+
+	rowDivider()
+	local _, _, _, aboutHit = itemRow("info", "About")
+	aboutHit.MouseButton1Click:Connect(function()
+		window:_closeAll()
+		window:Notify({
+			Title = (opts.Title or "Nocturne") .. " UI " .. Library.Version,
+			Text = "Menu library preview. Interface only.",
+			Duration = 4,
+		})
+	end)
+	local _, _, _, chatHit = itemRow("chat", "Chat")
+	chatHit.MouseButton1Click:Connect(function()
+		window:_closeAll()
+		if opts.OnChat then
+			safeCall(opts.OnChat)
+		else
+			window:Notify({ Title = "Chat", Text = "Chat is not available in the menu preview.", Duration = 3 })
+		end
+	end)
+
+	resize()
+
+	-- Сохранённые настройки (если включена синхронизация и есть writefile/readfile).
+	local saved = loadSavedSettings()
+	if saved then
+		Library.Settings.Sync = true
+		sync:Set(true, true)
+		if saved.Accent then
+			local ok, color = pcall(Color3.fromHex, saved.Accent)
+			if ok and color then
+				accentPicker:Set(color)
+			end
+		end
+		if saved.MenuScale then
+			window:SetMenuScale(saved.MenuScale)
+		end
+		if saved.WindowsScale then
+			window:SetWidgetScale(saved.WindowsScale)
+		end
+		Library.Settings.ESPScale = saved.ESPScale or "Auto"
+		Library.Settings.Units = saved.Units or "Auto"
+		Library.Settings.SafeModeText = saved.SafeMode and "Enabled" or "Disabled"
+		Library:SetSafeMode(saved.SafeMode == true)
+		Library:SetLanguage(saved.Language or "English")
+		for _, show in pairs(choices) do
+			show()
+		end
+	else
+		window:SetMenuScale(Library.Settings.MenuScale)
+		window:SetWidgetScale(Library.Settings.WindowsScale)
+	end
+end
+
+function Window:_toggleProfileMenu(card)
+	if not self._profileMenu then
+		return
+	end
+	if self:_isOpen(self._profileMenu) then
+		self:_closePopup(self._profileMenu)
+		return
+	end
+	self._profileMenu.Size = self._profileFullSize or self._profileMenu.Size
+	tween(card, 0.12, { BackgroundTransparency = 0 })
+	self:_openPopup(self._profileMenu, card, "up-right", function()
+		tween(card, 0.12, { BackgroundTransparency = 1 })
+	end, true)
 end
 
 function Window:Destroy()
@@ -2600,6 +3357,10 @@ function Library:CreateWindow(opts)
 		_popups = {},
 		_widgets = {},
 		_navOrder = 0,
+		_menuScale = 1,
+		_menuScales = {},
+		_widgetScale = 1,
+		_widgetScales = {},
 	}, Window)
 
 	local title = opts.Title or "Nocturne"
@@ -2625,6 +3386,7 @@ function Library:CreateWindow(opts)
 		Parent = gui,
 	}, { corner(10), stroke(Theme.Stroke, 0.3, 1) })
 	sink(main)
+	window:_scaleTarget(main)
 	window.main = main
 
 	-- Сайдбар
@@ -2694,32 +3456,55 @@ function Library:CreateWindow(opts)
 		Parent = sidebar,
 	})
 	divider({ Parent = footer })
-	create("ImageLabel", {
+	-- Карточка профиля: по клику открывается меню профиля.
+	local profileCard = create("TextButton", {
+		Name = "Profile",
+		Text = "",
+		AutoButtonColor = false,
+		BackgroundColor3 = Theme.NavActive,
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(8, 8),
+		Size = UDim2.new(1, -16, 1, -14),
+		Parent = footer,
+	}, { corner(8) })
+	window._footerAvatar = create("ImageLabel", {
 		BackgroundColor3 = Theme.NavActive,
 		Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(LocalPlayer.UserId) .. "&w=48&h=48",
 		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, 16, 0.5, 0),
+		Position = UDim2.new(0, 8, 0.5, 0),
 		Size = UDim2.fromOffset(28, 28),
-		Parent = footer,
+		Parent = profileCard,
 	}, { corner(14) })
-	label({
+	window._footerName = label({
 		Text = LocalPlayer.DisplayName,
 		Font = FONT_MEDIUM,
 		TextColor3 = Theme.TextStrong,
 		TextTruncate = Enum.TextTruncate.AtEnd,
-		Position = UDim2.fromOffset(54, 14),
-		Size = UDim2.new(1, -86, 0, 16),
-		Parent = footer,
+		Position = UDim2.fromOffset(46, 6),
+		Size = UDim2.new(1, -70, 0, 16),
+		Parent = profileCard,
 	})
-	label({
+	tr(label({
 		Text = opts.Footer or "Menu preview",
 		TextSize = TEXT_XS,
 		TextColor3 = Theme.Muted,
-		Position = UDim2.fromOffset(54, 31),
-		Size = UDim2.new(1, -86, 0, 12),
-		Parent = footer,
-	})
-	chevron({ AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -16, 0.5, 0), Parent = footer })
+		Position = UDim2.fromOffset(46, 23),
+		Size = UDim2.new(1, -70, 0, 12),
+		Parent = profileCard,
+	}), opts.Footer or "Menu preview")
+	chevron({ AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Parent = profileCard })
+	window._opts = opts
+	profileCard.MouseEnter:Connect(function()
+		tween(profileCard, 0.12, { BackgroundTransparency = 0.5 })
+	end)
+	profileCard.MouseLeave:Connect(function()
+		if not (window._profileMenu and window:_isOpen(window._profileMenu)) then
+			tween(profileCard, 0.12, { BackgroundTransparency = 1 })
+		end
+	end)
+	profileCard.MouseButton1Click:Connect(function()
+		window:_toggleProfileMenu(profileCard)
+	end)
 
 	-- Тулбар
 	local toolbar = create("Frame", {
@@ -2754,13 +3539,14 @@ function Library:CreateWindow(opts)
 		Font = FONT,
 		TextSize = TEXT_SM,
 		TextColor3 = Theme.TextStrong,
-		PlaceholderText = "Search",
+		PlaceholderText = translate("Search"),
 		PlaceholderColor3 = Theme.Muted,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		ClearTextOnFocus = false,
 		Text = "",
 		Parent = search,
 	})
+	tr(window.searchBox, "Search", false, "PlaceholderText")
 	window.searchBox:GetPropertyChangedSignal("Text"):Connect(function()
 		window:_filter(window.searchBox.Text)
 	end)
@@ -2849,6 +3635,7 @@ function Library:CreateWindow(opts)
 	end))
 
 	table.insert(Library.Windows, window)
+	window:_buildProfileMenu()
 	return window
 end
 
