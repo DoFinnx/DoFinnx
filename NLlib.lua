@@ -12,13 +12,18 @@ local TweenService = game:GetService("TweenService")
 local TextService = game:GetService("TextService")
 local GuiService = game:GetService("GuiService")
 local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local Stats = game:GetService("Stats")
 
 local LocalPlayer = Players.LocalPlayer
 
 local Library = {
-	Version = "1.1.0",
+	Version = "1.2.0",
 	Flags = {},
 	Windows = {},
+	Keybinds = {},
+	-- Можно переопределить под конкретную игру: function() return { Player, ... } end
+	GetSpectators = nil,
 }
 
 -- Токены из макета (дубли цветов сведены в один).
@@ -311,7 +316,8 @@ function Container:_attachAddons(element, acc)
 		return container:_colorpicker(acc, opts or {}, nextOrder())
 	end
 	function element:AddKeybind(opts)
-		return container:_keybind(acc, opts or {}, nextOrder())
+		local target = element.Type == "Toggle" and element or nil
+		return container:_keybind(acc, opts or {}, nextOrder(), target)
 	end
 	function element:AddSettings(title)
 		return container:_settings(acc, title or element.Name, nextOrder())
@@ -1129,8 +1135,20 @@ function Container:_settings(acc, title, order)
 	return panel
 end
 
-function Container:_keybind(acc, opts, order)
-	local keybind = { Type = "Keybind", Value = opts.Default, Listening = false }
+-- target: переключатель, к которому привязана клавиша (для toggle:AddKeybind).
+-- Режимы: "Toggle" — нажатие переключает, "Hold" — включено, пока клавиша зажата.
+-- ПКМ по полю клавиши меняет режим.
+function Container:_keybind(acc, opts, order, target)
+	local keybind = {
+		Type = "Keybind",
+		Name = opts.Name or (target and target.Name) or "Keybind",
+		Value = opts.Default,
+		Mode = opts.Mode or "Toggle",
+		Target = target,
+		Window = self.window,
+		Listening = false,
+	}
+	table.insert(Library.Keybinds, keybind)
 	local field = create("TextButton", {
 		Text = "",
 		AutoButtonColor = false,
@@ -1154,9 +1172,22 @@ function Container:_keybind(acc, opts, order)
 			keyLabel.Text = "..."
 			keyLabel.TextColor3 = Theme.Accent
 		else
-			keyLabel.Text = keybind.Value and keybind.Value.Name or "None"
+			local text = keybind.Value and keybind.Value.Name or "None"
+			if target and keybind.Value and keybind.Mode == "Hold" then
+				text = text .. " · hold"
+			end
+			keyLabel.Text = text
 			keyLabel.TextColor3 = Theme.Muted
 		end
+	end
+
+	function keybind:SetMode(mode)
+		self.Mode = mode == "Hold" and "Hold" or "Toggle"
+		render()
+	end
+
+	function keybind:IsActive()
+		return self.Target ~= nil and self.Target.Value == true
 	end
 
 	function keybind:Set(key, silent)
@@ -1179,6 +1210,11 @@ function Container:_keybind(acc, opts, order)
 		Library._listening = true
 		render()
 	end)
+	if target then
+		field.MouseButton2Click:Connect(function()
+			keybind:SetMode(keybind.Mode == "Toggle" and "Hold" or "Toggle")
+		end)
+	end
 
 	self:_track(UserInputService.InputBegan:Connect(function(input, processed)
 		if input.UserInputType ~= Enum.UserInputType.Keyboard then
@@ -1193,7 +1229,19 @@ function Container:_keybind(acc, opts, order)
 			return
 		end
 		if not processed and keybind.Value and input.KeyCode == keybind.Value then
+			if target then
+				if keybind.Mode == "Hold" then
+					target:Set(true)
+				else
+					target:Set(not target.Value)
+				end
+			end
 			safeCall(opts.Callback, keybind.Value)
+		end
+	end))
+	self:_track(UserInputService.InputEnded:Connect(function(input)
+		if target and keybind.Mode == "Hold" and keybind.Value and input.KeyCode == keybind.Value then
+			target:Set(false)
 		end
 	end))
 
@@ -1828,11 +1876,503 @@ function Window:Notify(opts)
 	end)
 end
 
+----------------------------------------------------------------------
+-- Экранные виджеты: Watermark, Hotkeys, Spectators
+-- Живут в отдельном слое и остаются на экране, когда меню скрыто.
+----------------------------------------------------------------------
+
+local function hex(color)
+	return "#" .. color:ToHex()
+end
+
+local function getPing()
+	local ok, ping = pcall(function()
+		return LocalPlayer:GetNetworkPing()
+	end)
+	if ok and type(ping) == "number" then
+		return math.floor(ping * 1000 + 0.5)
+	end
+	return nil
+end
+
+local function getMemory()
+	local ok, memory = pcall(function()
+		return Stats:GetTotalMemoryUsageMb()
+	end)
+	if ok and type(memory) == "number" then
+		return math.floor(memory + 0.5)
+	end
+	return nil
+end
+
+local function getSpeed()
+	local character = LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return nil
+	end
+	local velocity = root.AssemblyLinearVelocity
+	return math.floor(Vector3.new(velocity.X, 0, velocity.Z).Magnitude + 0.5)
+end
+
+local function getKD()
+	local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
+	if not leaderstats then
+		return nil
+	end
+	local function find(names)
+		for _, name in ipairs(names) do
+			local value = leaderstats:FindFirstChild(name)
+			if value and (value:IsA("IntValue") or value:IsA("NumberValue")) then
+				return value.Value
+			end
+		end
+		return nil
+	end
+	local kills = find({ "Kills", "KOs", "Kill" })
+	local deaths = find({ "Deaths", "Wipeouts", "Death" })
+	if not kills or not deaths then
+		return nil
+	end
+	return string.format("%.2f", kills / math.max(deaths, 1))
+end
+
+-- По умолчанию «наблюдатели» — игроки без живого персонажа (умершие / ещё не заспавнившиеся).
+-- В Roblox нет общего способа узнать, на кого смотрит камера другого игрока,
+-- поэтому для конкретной игры задайте Library.GetSpectators.
+local function defaultSpectators()
+	local result = {}
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer then
+			local character = player.Character
+			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+			if not humanoid or humanoid.Health <= 0 then
+				table.insert(result, player)
+			end
+		end
+	end
+	return result
+end
+
+function Window:_draggable(frame)
+	local dragStart, startPosition
+	frame.InputBegan:Connect(function(input)
+		if isPointer(input) then
+			dragStart = input.Position
+			startPosition = frame.Position
+		end
+	end)
+	self:_track(UserInputService.InputChanged:Connect(function(input)
+		if dragStart and isMove(input) then
+			local delta = input.Position - dragStart
+			frame.Position = UDim2.new(
+				startPosition.X.Scale,
+				startPosition.X.Offset + delta.X,
+				startPosition.Y.Scale,
+				startPosition.Y.Offset + delta.Y
+			)
+		end
+	end))
+	self:_track(UserInputService.InputEnded:Connect(function(input)
+		if isPointer(input) then
+			dragStart = nil
+		end
+	end))
+end
+
+function Window:_startWidgetLoop()
+	if self._widgetLoop then
+		return
+	end
+	self._widgetLoop = true
+	local frames, fps, last = 0, 0, os.clock()
+	self:_track(RunService.RenderStepped:Connect(function()
+		frames += 1
+	end))
+	task.spawn(function()
+		while self.gui and self.gui.Parent do
+			local now = os.clock()
+			if now - last >= 0.5 then
+				fps = math.floor(frames / (now - last) + 0.5)
+				frames = 0
+				last = now
+			end
+			local info = { fps = fps, menuOpen = self.Visible }
+			for _, widget in ipairs(self._widgets) do
+				local ok, err = pcall(widget._update, widget, info)
+				if not ok then
+					warn("[Nocturne UI] widget error: " .. tostring(err))
+				end
+			end
+			task.wait(0.25)
+		end
+	end)
+end
+
+function Window:CreateWatermark(opts)
+	opts = opts or {}
+	local watermark = {
+		Visible = opts.Visible ~= false,
+		Items = opts.Items or { "Logo", "Name", "Framerate", "Latency", "Time" },
+		Avatar = opts.Avatar ~= false,
+		Accent = opts.Accent or Theme.Accent,
+		Title = opts.Title or "NC",
+	}
+
+	local frame = create("Frame", {
+		Name = "Watermark",
+		BackgroundColor3 = Theme.Panel,
+		AnchorPoint = Vector2.new(1, 0),
+		Position = opts.Position or UDim2.new(1, -16, 0, 16),
+		Size = UDim2.fromOffset(0, 30),
+		AutomaticSize = Enum.AutomaticSize.X,
+		Visible = false,
+		Parent = self.widgetLayer,
+	}, {
+		corner(8),
+		stroke(Theme.Stroke, 0.3, 1),
+		padding(10, 0, 12, 0),
+		listLayout(8, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center),
+	})
+	local logo = label({
+		Text = watermark.Title,
+		Font = FONT_BOLD,
+		TextSize = TEXT_MD,
+		TextColor3 = watermark.Accent,
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.fromOffset(0, 18),
+		LayoutOrder = 1,
+		Parent = frame,
+	})
+	local avatar = create("ImageLabel", {
+		BackgroundColor3 = Theme.NavActive,
+		Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(LocalPlayer.UserId) .. "&w=48&h=48",
+		Size = UDim2.fromOffset(18, 18),
+		LayoutOrder = 2,
+		Parent = frame,
+	}, { corner(9) })
+	local info = label({
+		RichText = true,
+		TextSize = TEXT_SM,
+		TextColor3 = Theme.TextStrong,
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.fromOffset(0, 18),
+		LayoutOrder = 3,
+		Parent = frame,
+	})
+	self:_draggable(frame)
+
+	local function has(item)
+		return table.find(watermark.Items, item) ~= nil
+	end
+
+	function watermark:_update(state)
+		local segments = {}
+		local function add(text)
+			if text then
+				table.insert(segments, text)
+			end
+		end
+		-- порядок как в списке пунктов
+		for _, item in ipairs(self.Items) do
+			if item == "Name" then
+				add(LocalPlayer.DisplayName)
+			elseif item == "Framerate" then
+				add(tostring(state.fps) .. " fps")
+			elseif item == "Latency" then
+				local ping = getPing()
+				add(ping and (ping .. " ms") or nil)
+			elseif item == "Speed" then
+				local speed = getSpeed()
+				add(speed and (speed .. " st/s") or nil)
+			elseif item == "Memory" then
+				local memory = getMemory()
+				add(memory and (memory .. " MB") or nil)
+			elseif item == "KD Ratio" then
+				local kd = getKD()
+				add(kd and ("KD " .. kd) or nil)
+			elseif item == "Players" then
+				add(#Players:GetPlayers() .. " players")
+			elseif item == "Time" then
+				add(os.date("%H:%M:%S"))
+			end
+		end
+		local separator = string.format('<font color="%s">  |  </font>', hex(Theme.Muted))
+		info.Text = table.concat(segments, separator)
+		info.Visible = #segments > 0
+		logo.Visible = has("Logo")
+		avatar.Visible = self.Avatar
+		frame.Visible = self.Visible and (logo.Visible or avatar.Visible or info.Visible)
+	end
+
+	function watermark:SetVisible(visible)
+		self.Visible = visible
+	end
+	function watermark:SetItems(items)
+		self.Items = items or {}
+	end
+	function watermark:SetAvatar(enabled)
+		self.Avatar = enabled
+	end
+	function watermark:SetAccent(color)
+		self.Accent = color
+		logo.TextColor3 = color
+	end
+	watermark.Frame = frame
+
+	table.insert(self._widgets, watermark)
+	self:_startWidgetLoop()
+	return watermark
+end
+
+-- Общий виджет-список (для Hotkeys и Spectators).
+function Window:_listWidget(name, title, position)
+	local widget = {
+		Visible = true,
+		Style = "Default",
+		RightAligned = false,
+		Dynamic = false,
+		Accent = Theme.Accent,
+		Entries = {},
+		_signature = nil,
+	}
+
+	local frame = create("Frame", {
+		Name = name,
+		BackgroundColor3 = Theme.Panel,
+		Position = position,
+		Size = UDim2.fromOffset(200, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Visible = false,
+		Parent = self.widgetLayer,
+	}, { corner(8), stroke(Theme.Stroke, 0.3, 1) })
+	local header = create("Frame", {
+		BackgroundColor3 = Theme.Accent,
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 28),
+		Parent = frame,
+	}, { corner(8) })
+	local accentLine = create("Frame", {
+		BackgroundColor3 = Theme.Accent,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(12, 0),
+		Size = UDim2.new(1, -24, 0, 2),
+		Parent = frame,
+	}, { corner(1) })
+	local titleLabel = label({
+		Text = title,
+		Font = FONT_MEDIUM,
+		TextSize = TEXT_SM,
+		TextColor3 = Theme.Title,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Size = UDim2.fromScale(1, 1),
+		Parent = header,
+	})
+	local body = create("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 28),
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Parent = frame,
+	}, { padding(12, 0, 12, 8), listLayout(0) })
+	self:_draggable(frame)
+
+	local function rowHeight()
+		return widget.Style == "Compact" and 18 or 22
+	end
+
+	local function applyStyle()
+		local compact = widget.Style == "Compact"
+		local inverted = widget.Style == "Inverted"
+		local headerHeight = compact and 22 or 28
+		header.Size = UDim2.new(1, 0, 0, headerHeight)
+		body.Position = UDim2.fromOffset(0, headerHeight)
+		header.BackgroundColor3 = widget.Accent
+		header.BackgroundTransparency = inverted and 0 or 1
+		titleLabel.TextColor3 = inverted and Theme.Window or Theme.Title
+		titleLabel.TextSize = compact and TEXT_XS + 1 or TEXT_SM
+		accentLine.Visible = not inverted
+		accentLine.BackgroundColor3 = widget.Accent
+	end
+
+	local function rebuild(entries, placeholder)
+		for _, child in ipairs(body:GetChildren()) do
+			if child:IsA("Frame") then
+				child:Destroy()
+			end
+		end
+		local list = entries
+		if #list == 0 and placeholder then
+			list = { { Name = "None", Dim = true } }
+		end
+		local height = rowHeight()
+		local textSize = widget.Style == "Compact" and TEXT_XS + 1 or TEXT_SM
+		for index, entry in ipairs(list) do
+			local row = create("Frame", {
+				BackgroundTransparency = 1,
+				Size = UDim2.new(1, 0, 0, height),
+				LayoutOrder = index,
+				Parent = body,
+			})
+			local offset = 0
+			if entry.Image then
+				local image = create("ImageLabel", {
+					BackgroundColor3 = Theme.NavActive,
+					Image = entry.Image,
+					AnchorPoint = Vector2.new(widget.RightAligned and 1 or 0, 0.5),
+					Position = UDim2.new(widget.RightAligned and 1 or 0, 0, 0.5, 0),
+					Size = UDim2.fromOffset(height - 6, height - 6),
+					Parent = row,
+				})
+				corner(math.floor((height - 6) / 2)).Parent = image
+				offset = height
+			end
+			local nameLabel = label({
+				Text = entry.Name,
+				TextSize = textSize,
+				TextColor3 = entry.Dim and Theme.Muted or Theme.TextStrong,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+				TextXAlignment = widget.RightAligned and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left,
+				Position = UDim2.fromOffset(widget.RightAligned and 0 or offset, 0),
+				Size = UDim2.new(1, -offset, 1, 0),
+				Parent = row,
+			})
+			if entry.Value then
+				local valueLabel = label({
+					Text = entry.Value,
+					TextSize = textSize - 1,
+					TextColor3 = entry.Dim and Theme.Muted or widget.Accent,
+					AutomaticSize = Enum.AutomaticSize.X,
+					AnchorPoint = Vector2.new(widget.RightAligned and 0 or 1, 0),
+					Position = UDim2.fromScale(widget.RightAligned and 0 or 1, 0),
+					Size = UDim2.new(0, 0, 1, 0),
+					TextXAlignment = widget.RightAligned and Enum.TextXAlignment.Left or Enum.TextXAlignment.Right,
+					Parent = row,
+				})
+				if widget.RightAligned then
+					valueLabel.Position = UDim2.fromScale(0, 0)
+					-- значение слева, имя справа — оставляем имени место под значение
+					nameLabel.Position = UDim2.fromOffset(0, 0)
+					nameLabel.Size = UDim2.new(1, -offset, 1, 0)
+				end
+			end
+		end
+	end
+
+	function widget:SetEntries(entries, state)
+		self.Entries = entries
+		local parts = { self.Style, tostring(self.RightAligned), tostring(state.menuOpen) }
+		for _, entry in ipairs(entries) do
+			table.insert(parts, tostring(entry.Name) .. "=" .. tostring(entry.Value) .. tostring(entry.Dim))
+		end
+		local signature = table.concat(parts, "|")
+		if signature ~= self._signature then
+			self._signature = signature
+			rebuild(entries, state.menuOpen)
+		end
+		local count = #entries
+		titleLabel.Text = self.Dynamic and string.format("%s (%d)", title, count) or title
+		-- Dynamic: пустой список прячется, пока меню закрыто
+		frame.Visible = self.Visible and (count > 0 or state.menuOpen or not self.Dynamic)
+	end
+
+	function widget:SetVisible(visible)
+		self.Visible = visible
+	end
+	function widget:SetStyle(style)
+		self.Style = style
+		self._signature = nil
+		applyStyle()
+	end
+	function widget:SetRightAligned(enabled)
+		self.RightAligned = enabled
+		self._signature = nil
+	end
+	function widget:SetDynamic(enabled)
+		self.Dynamic = enabled
+	end
+	function widget:SetAccent(color)
+		self.Accent = color
+		self._signature = nil
+		applyStyle()
+	end
+	widget.Frame = frame
+
+	applyStyle()
+	table.insert(self._widgets, widget)
+	self:_startWidgetLoop()
+	return widget
+end
+
+function Window:CreateHotkeyList(opts)
+	opts = opts or {}
+	local window = self
+	local widget = self:_listWidget("Hotkeys", opts.Title or "Hotkeys", opts.Position or UDim2.fromOffset(16, 260))
+	widget.ShowAll = opts.ShowAll == true
+	widget.Visible = opts.Visible ~= false
+
+	function widget:SetShowAll(enabled)
+		self.ShowAll = enabled
+	end
+
+	function widget:_update(state)
+		local entries = {}
+		for _, keybind in ipairs(Library.Keybinds) do
+			if keybind.Window == window and keybind.Target and keybind.Value then
+				local active = keybind:IsActive()
+				if active then
+					table.insert(entries, {
+						Name = keybind.Target.Name,
+						Value = keybind.Mode == "Hold" and "[holding]" or "[toggled]",
+					})
+				elseif self.ShowAll then
+					table.insert(entries, { Name = keybind.Target.Name, Value = "[" .. keybind.Value.Name .. "]", Dim = true })
+				end
+			end
+		end
+		self:SetEntries(entries, state)
+	end
+
+	return widget
+end
+
+function Window:CreateSpectatorList(opts)
+	opts = opts or {}
+	local widget = self:_listWidget("Spectators", opts.Title or "Spectators", opts.Position or UDim2.fromOffset(16, 420))
+	widget.Visible = opts.Visible ~= false
+
+	function widget:_update(state)
+		local getter = Library.GetSpectators or defaultSpectators
+		local ok, players = pcall(getter)
+		if not ok or type(players) ~= "table" then
+			players = {}
+		end
+		local entries = {}
+		for _, player in ipairs(players) do
+			if typeof(player) == "Instance" and player:IsA("Player") then
+				table.insert(entries, {
+					Name = player.DisplayName,
+					Value = "@" .. player.Name,
+					Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(player.UserId) .. "&w=48&h=48",
+				})
+			end
+		end
+		self:SetEntries(entries, state)
+	end
+
+	return widget
+end
+
 function Window:Destroy()
 	for _, connection in ipairs(self._connections) do
 		connection:Disconnect()
 	end
 	self._connections = {}
+	for i = #Library.Keybinds, 1, -1 do
+		if Library.Keybinds[i].Window == self then
+			table.remove(Library.Keybinds, i)
+		end
+	end
 	self.gui:Destroy()
 	for i, window in ipairs(Library.Windows) do
 		if window == self then
@@ -1854,6 +2394,7 @@ function Library:CreateWindow(opts)
 		ToggleKey = opts.ToggleKey or Enum.KeyCode.RightShift,
 		_connections = {},
 		_popups = {},
+		_widgets = {},
 		_navOrder = 0,
 	}, Window)
 
@@ -1867,6 +2408,9 @@ function Library:CreateWindow(opts)
 	})
 	gui.Parent = getGuiParent()
 	window.gui = gui
+
+	-- Слой виджетов создаётся первым, чтобы меню и всплывающие окна были поверх него.
+	window.widgetLayer = create("Frame", { Name = "Widgets", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Parent = gui })
 
 	local main = create("Frame", {
 		Name = "Main",
