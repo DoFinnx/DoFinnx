@@ -18,7 +18,7 @@ local Stats = game:GetService("Stats")
 local LocalPlayer = Players.LocalPlayer
 
 local Library = {
-	Version = "1.9.0",
+	Version = "1.10.0",
 	Flags = {},
 	Windows = {},
 	Keybinds = {},
@@ -4274,6 +4274,144 @@ function Window:_initSyncTags()
 	end)
 end
 
+-- Значок «NC» в списке игроков Roblox (Tab) у пользователей скрипта, включая вас.
+-- Список игроков лежит в CoreGui: доступ к нему есть у инжекторов, в обычном LocalScript — нет.
+Library.PlayerListTagsVisible = true
+
+function Window:_initPlayerListTags()
+	local window = self
+	local TAG_NAME = "NocturneTag"
+
+	local function getPlayerList()
+		local ok, list = pcall(function()
+			return CoreGui:FindFirstChild("PlayerList")
+		end)
+		return ok and list or nil
+	end
+
+	local function wantedUsers()
+		local wanted = {}
+		if Library.Settings.Sync and Library.PlayerListTagsVisible then
+			wanted[LocalPlayer.UserId] = true
+			for id in pairs(Library.SyncUsers) do
+				wanted[id] = true
+			end
+		end
+		return wanted
+	end
+
+	local function makeTag(nameLabel)
+		local tag = create("TextLabel", {
+			Name = TAG_NAME,
+			BackgroundColor3 = Theme.Accent,
+			BackgroundTransparency = 0.1,
+			AnchorPoint = Vector2.new(0, 0.5),
+			Size = UDim2.fromOffset(24, 15),
+			Font = FONT_BOLD,
+			Text = window._logo or "NC",
+			TextSize = 10,
+			TextColor3 = Color3.new(1, 1, 1),
+			ZIndex = nameLabel.ZIndex + 1,
+			Parent = nameLabel,
+		}, { corner(4) })
+		return tag
+	end
+
+	-- ставим значок сразу справа от текста имени
+	local function placeTag(tag, nameLabel)
+		local width = math.min(nameLabel.TextBounds.X, nameLabel.AbsoluteSize.X)
+		local x = width + 6
+		if nameLabel.TextXAlignment == Enum.TextXAlignment.Right then
+			x = nameLabel.AbsoluteSize.X + 6
+		elseif nameLabel.TextXAlignment == Enum.TextXAlignment.Center then
+			x = (nameLabel.AbsoluteSize.X + width) / 2 + 6
+		end
+		tag.Position = UDim2.new(0, x, 0.5, 0)
+		tag.BackgroundColor3 = Theme.Accent
+	end
+
+	-- надпись с именем игрока внутри строки (отображаемое имя или ник)
+	local function findNameLabel(root, player)
+		for _, item in ipairs(root:GetDescendants()) do
+			if item:IsA("TextLabel") and item.Name ~= TAG_NAME
+				and (item.Text == player.DisplayName or item.Text == player.Name or item.Text == "@" .. player.Name)
+			then
+				return item
+			end
+		end
+		return nil
+	end
+
+	local function refresh()
+		local list = getPlayerList()
+		if not list then
+			return
+		end
+		local wanted = wantedUsers()
+		local foundRows = false
+
+		-- обычная разметка: строка игрока называется "p_<UserId>"
+		for _, row in ipairs(list:GetDescendants()) do
+			local id = row:IsA("GuiObject") and tonumber(string.match(row.Name, "^p_(%d+)$"))
+			if id then
+				foundRows = true
+				local player = Players:GetPlayerByUserId(id)
+				local existing = row:FindFirstChild(TAG_NAME, true)
+				if wanted[id] and player then
+					local nameLabel = existing and existing.Parent or findNameLabel(row, player)
+					if nameLabel then
+						placeTag(existing or makeTag(nameLabel), nameLabel)
+					end
+				elseif existing then
+					existing:Destroy()
+				end
+			end
+		end
+
+		-- запасной вариант, если разметка списка другая: ищем надписи с именами
+		if not foundRows then
+			local byText = {}
+			for id in pairs(wanted) do
+				local player = Players:GetPlayerByUserId(id)
+				if player then
+					byText[player.DisplayName] = true
+					byText[player.Name] = true
+				end
+			end
+			for _, item in ipairs(list:GetDescendants()) do
+				if item:IsA("TextLabel") and item.Name ~= TAG_NAME then
+					local existing = item:FindFirstChild(TAG_NAME)
+					if byText[item.Text] then
+						placeTag(existing or makeTag(item), item)
+					elseif existing then
+						existing:Destroy()
+					end
+				end
+			end
+		end
+	end
+
+	self._refreshPlayerListTags = refresh
+	Library:OnSyncUsers(function()
+		pcall(refresh)
+	end)
+	task.spawn(function()
+		while window.gui.Parent do
+			task.wait(2) -- список игроков перерисовывается сам, значки ставим заново
+			pcall(refresh)
+		end
+		-- при выгрузке меню убираем значки
+		local list = getPlayerList()
+		if list then
+			for _, item in ipairs(list:GetDescendants()) do
+				if item.Name == TAG_NAME then
+					item:Destroy()
+				end
+			end
+		end
+	end)
+end
+
 -- Плашка-список «Script Users» в стиле Hotkeys/Spectators.
 function Window:CreateSyncList(opts)
 	opts = opts or {}
@@ -4625,6 +4763,7 @@ function Library:CreateWindow(opts)
 	end
 	window._logo = opts.Logo or string.upper(string.sub(title, 1, 2))
 	window:_initSyncTags()
+	window:_initPlayerListTags()
 	window:_buildProfileMenu()
 	return window
 end
