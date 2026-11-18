@@ -18,7 +18,7 @@ local Stats = game:GetService("Stats")
 local LocalPlayer = Players.LocalPlayer
 
 local Library = {
-	Version = "1.8.0",
+	Version = "1.9.0",
 	Flags = {},
 	Windows = {},
 	Keybinds = {},
@@ -66,6 +66,9 @@ local Library = {
 			["Player joined"] = "Игрок зашёл",
 			["Player left"] = "Игрок вышел",
 			["You died"] = "Вы погибли",
+			["Not connected"] = "Нет связи",
+			["also uses this script"] = "тоже использует этот скрипт",
+			["Script Users"] = "Пользователи скрипта",
 			["Menu preview"] = "Предпросмотр меню",
 			["Accent Presets"] = "Цвет акцента",
 			Blue = "Синий",
@@ -380,8 +383,10 @@ local function tr(inst, key, isUpper, prop)
 	return inst
 end
 
-local function saveSettings(force)
-	if not (Library.Settings.Sync or force) or type(writefile) ~= "function" then
+-- Настройки профиля (язык, масштаб, цвет, Safe Mode, Synchronization) запоминаются всегда,
+-- если у инжектора есть writefile/readfile.
+local function saveSettings()
+	if type(writefile) ~= "function" then
 		return
 	end
 	pcall(function()
@@ -399,7 +404,7 @@ local function loadSavedSettings()
 		end
 		return nil
 	end)
-	if ok and type(data) == "table" and data.Sync then
+	if ok and type(data) == "table" then
 		return data
 	end
 	return nil
@@ -784,40 +789,6 @@ function Library:LoadConfig(name)
 	end
 	self:ApplyConfig(data)
 	return true
-end
-
--- Synchronization: всё меню автоматически пишется в nocturne_sync.json
--- и восстанавливается при следующем запуске.
-local SYNC_NAME = "sync"
-local lastSyncJson = nil
-
-function Library:_writeSync(force)
-	if not (self.Settings.Sync or force) or type(writefile) ~= "function" then
-		return
-	end
-	-- пока сохранённое не загружено, не перезаписываем файл значениями по умолчанию
-	if not (self._syncLoaded or force) then
-		return
-	end
-	local ok, json = pcall(function()
-		return HttpService:JSONEncode(self:GetConfig())
-	end)
-	if ok and (force or json ~= lastSyncJson) then
-		lastSyncJson = json
-		pcall(writefile, configFile(SYNC_NAME), json)
-	end
-end
-
-function Library:LoadSynced()
-	if self._syncLoaded then
-		return false
-	end
-	self._syncLoaded = true
-	if not self.Settings.Sync then
-		return false
-	end
-	local ok = self:LoadConfig(SYNC_NAME)
-	return ok
 end
 
 -- Тонкая линия между строками внутри карточки секции (в панелях линий нет).
@@ -3978,24 +3949,32 @@ function Window:_buildProfileMenu()
 		Library:SetSafeMode(option == "Enabled")
 	end)
 
+	-- Synchronization: показывать других пользователей этого скрипта на сервере.
 	local sync = menu:AddToggle({
 		Name = "Synchronization",
 		Default = Library.Settings.Sync,
 		Callback = function(value)
-			Library.Settings.Sync = value
-			saveSettings(true) -- при выключении тоже пишем, чтобы файл не включал её снова
-			if value then
-				Library._syncLoaded = true
-				Library:_writeSync(true)
-				window:Notify({
-					Title = "Synchronization",
-					Text = type(writefile) == "function" and "Menu state will be saved and restored on next launch."
-						or "Saving needs writefile (executor). Settings are kept only for this session.",
-					Duration = 4,
-				})
-			end
+			Library:SetSync(value)
 		end,
 	})
+	-- счётчик найденных пользователей рядом с переключателем
+	local syncCount = label({
+		Text = "",
+		Font = FONT_MEDIUM,
+		TextSize = TEXT_SM,
+		TextColor3 = Theme.Accent,
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.fromOffset(0, 18),
+		LayoutOrder = 1,
+		Parent = sync.Row:FindFirstChild("Controls"),
+	})
+	table.insert(Library._syncListeners, function(users)
+		local count = 0
+		for _ in pairs(users) do
+			count += 1
+		end
+		syncCount.Text = count > 0 and tostring(count) or ""
+	end)
 	sync.Row.Size = UDim2.new(1, 0, 0, 36)
 	sync.Label.Position = UDim2.fromOffset(36, 0)
 	sync.Label.TextColor3 = Theme.TextStrong
@@ -4031,11 +4010,13 @@ function Window:_buildProfileMenu()
 
 	resize()
 
-	-- Сохранённые настройки (если включена синхронизация и есть writefile/readfile).
+	-- Сохранённые настройки профиля (если у инжектора есть writefile/readfile).
 	local saved = loadSavedSettings()
 	if saved then
-		Library.Settings.Sync = true
-		sync:Set(true, true)
+		if saved.Sync then
+			sync:Set(true, true)
+			Library:SetSync(true)
+		end
 		if saved.Accent then
 			local ok, color = pcall(Color3.fromHex, saved.Accent)
 			if ok and color then
@@ -4075,6 +4056,256 @@ function Window:_toggleProfileMenu(card)
 	self:_openPopup(self._profileMenu, card, "up-right", function()
 		tween(card, 0.12, { BackgroundTransparency = 1 })
 	end, true)
+end
+
+----------------------------------------------------------------------
+-- Synchronization: видеть других пользователей этого скрипта на том же сервере.
+-- Каждые 15 с скрипт отправляет на ваш сервер (server/presence-server.js)
+-- свой UserId и JobId сервера, а в ответ получает UserId остальных пользователей
+-- скрипта на этом сервере. Им рисуется значок над головой и список «Script Users».
+-- Нужна функция HTTP-запросов инжектора (request / http_request / syn.request).
+----------------------------------------------------------------------
+
+Library.SyncEndpoint = nil
+Library.SyncUsers = {} -- [UserId] = true
+Library.SyncTagsVisible = true
+Library._syncListeners = {}
+
+local SYNC_INTERVAL = 15
+
+local function httpRequester()
+	local ok, requester = pcall(function()
+		return (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+	end)
+	return ok and requester or nil
+end
+
+local function currentJobId()
+	return game.JobId ~= "" and game.JobId or "studio"
+end
+
+local function syncPost(path, body)
+	local requester = httpRequester()
+	if not requester then
+		return nil, "this executor has no HTTP request function"
+	end
+	local endpoint = Library.SyncEndpoint
+	if type(endpoint) ~= "string" or endpoint == "" then
+		return nil, "SyncEndpoint is not set"
+	end
+	local url = (string.gsub(endpoint, "/+$", "")) .. path
+	local ok, response = pcall(requester, {
+		Url = url,
+		Method = "POST",
+		Headers = { ["Content-Type"] = "application/json" },
+		Body = HttpService:JSONEncode(body),
+	})
+	if not ok or type(response) ~= "table" then
+		return nil, tostring(response)
+	end
+	local code = tonumber(response.StatusCode) or 0
+	if code < 200 or code >= 300 then
+		return nil, "HTTP " .. tostring(code)
+	end
+	local decodeOk, data = pcall(function()
+		return HttpService:JSONDecode(response.Body or "")
+	end)
+	if not decodeOk or type(data) ~= "table" then
+		return nil, "bad server response"
+	end
+	return data
+end
+
+function Library:_setSyncUsers(list)
+	local users, joined = {}, {}
+	for _, raw in ipairs(list or {}) do
+		local id = tonumber(raw)
+		if id and id ~= LocalPlayer.UserId then
+			users[id] = true
+			if not self.SyncUsers[id] then
+				table.insert(joined, id)
+			end
+		end
+	end
+	self.SyncUsers = users
+	for _, listener in ipairs(self._syncListeners) do
+		pcall(listener, users, joined)
+	end
+end
+
+-- Подписка: fn(users, joinedIds) вызывается после каждого обновления списка.
+function Library:OnSyncUsers(callback)
+	table.insert(self._syncListeners, callback)
+end
+
+function Library:SetSync(enabled)
+	enabled = enabled == true
+	self.Settings.Sync = enabled
+	saveSettings()
+	if not enabled then
+		self:_setSyncUsers({})
+		task.spawn(syncPost, "/leave", { userId = LocalPlayer.UserId, jobId = currentJobId() })
+		return
+	end
+	if self._syncLoop then
+		return
+	end
+	self._syncLoop = true
+	task.spawn(function()
+		local reportedError = nil
+		while self.Settings.Sync and #self.Windows > 0 do
+			local data, err = syncPost("/presence", {
+				userId = LocalPlayer.UserId,
+				jobId = currentJobId(),
+				placeId = game.PlaceId,
+			})
+			if data and type(data.users) == "table" then
+				reportedError = nil
+				self:_setSyncUsers(data.users)
+			elseif err ~= reportedError then
+				-- о каждой новой ошибке сообщаем один раз
+				reportedError = err
+				self:Notify({ Title = "Synchronization", Text = translate("Not connected") .. ": " .. tostring(err), Duration = 5 })
+			end
+			task.wait(SYNC_INTERVAL)
+		end
+		self._syncLoop = false
+	end)
+end
+
+-- Значки «NC» над головами других пользователей скрипта (видны только вам).
+function Window:_initSyncTags()
+	local window = self
+	local folder = Instance.new("Folder")
+	folder.Name = "NocturneSyncTags"
+	folder.Parent = self.gui.Parent
+	self._syncFolder = folder
+	local tags = {}
+
+	local function makeTag(player)
+		local billboard = create("BillboardGui", {
+			Name = tostring(player.UserId),
+			Size = UDim2.fromOffset(160, 24),
+			StudsOffset = Vector3.new(0, 2.8, 0),
+			AlwaysOnTop = true,
+			LightInfluence = 0,
+			MaxDistance = 300,
+			ResetOnSpawn = false,
+			Parent = folder,
+		})
+		local pill = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.new(0, 0, 0, 22),
+			AutomaticSize = Enum.AutomaticSize.X,
+			BackgroundColor3 = WIDGET_BG,
+			BackgroundTransparency = 0.2,
+			Parent = billboard,
+		}, {
+			corner(11),
+			stroke(Theme.Accent, 0.5, 1),
+			padding(9, 0, 9, 0),
+			listLayout(6, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center),
+		})
+		label({
+			Text = window._logo or "NC",
+			Font = FONT_BOLD,
+			TextSize = TEXT_SM - 1,
+			TextColor3 = Theme.Accent,
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.fromOffset(0, 16),
+			LayoutOrder = 1,
+			Parent = pill,
+		})
+		local nameLabel = label({
+			Name = "PlayerName",
+			Text = player.DisplayName,
+			Font = FONT_MEDIUM,
+			TextSize = TEXT_SM - 1,
+			TextColor3 = Theme.Title,
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.fromOffset(0, 16),
+			LayoutOrder = 2,
+			Parent = pill,
+		})
+		return { gui = billboard, name = nameLabel }
+	end
+
+	local function refresh()
+		for id, tag in pairs(tags) do
+			if not Library.SyncUsers[id] then
+				tag.gui:Destroy()
+				tags[id] = nil
+			end
+		end
+		for id in pairs(Library.SyncUsers) do
+			local player = Players:GetPlayerByUserId(id)
+			local head = player and player.Character and player.Character:FindFirstChild("Head")
+			if player and head then
+				local tag = tags[id]
+				if not tag then
+					tag = makeTag(player)
+					tags[id] = tag
+				end
+				tag.gui.Adornee = head -- после респавна голова новая
+				tag.gui.Enabled = Library.SyncTagsVisible
+				tag.name.Text = Library.Settings.SafeMode and translate("Hidden") or player.DisplayName
+			end
+		end
+	end
+
+	Library:OnSyncUsers(function(_, joined)
+		refresh()
+		for _, id in ipairs(joined) do
+			local player = Players:GetPlayerByUserId(id)
+			if player then
+				local name = Library.Settings.SafeMode and translate("Hidden") or player.DisplayName
+				window:Notify({ Title = "Synchronization", Text = name .. " " .. translate("also uses this script"), Duration = 4 })
+			end
+		end
+	end)
+
+	task.spawn(function()
+		while window.gui.Parent do
+			task.wait(2)
+			pcall(refresh)
+		end
+		folder:Destroy()
+	end)
+end
+
+-- Плашка-список «Script Users» в стиле Hotkeys/Spectators.
+function Window:CreateSyncList(opts)
+	opts = opts or {}
+	local widget = self:_listWidget("SyncUsers", opts.Title or "Script Users", opts.Position or UDim2.fromOffset(16, 600), "cast")
+	widget.Visible = opts.Visible ~= false
+
+	function widget:_update(state)
+		local entries = {}
+		for id in pairs(Library.SyncUsers) do
+			local player = Players:GetPlayerByUserId(id)
+			if player then
+				if Library.Settings.SafeMode then
+					table.insert(entries, { Name = translate("Hidden") .. " " .. #entries + 1, Icon = "none" })
+				else
+					table.insert(entries, {
+						Name = player.DisplayName,
+						Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(id) .. "&w=48&h=48",
+					})
+				end
+			end
+		end
+		table.sort(entries, function(a, b)
+			return a.Name < b.Name
+		end)
+		self:SetEntries(entries, state)
+		-- без включённой Synchronization плашку не показываем вовсе
+		if not Library.Settings.Sync then
+			self.Frame.Visible = false
+		end
+	end
+
+	return widget
 end
 
 function Window:Destroy()
@@ -4388,19 +4619,13 @@ function Library:CreateWindow(opts)
 	end))
 
 	table.insert(Library.Windows, window)
+	-- адрес сервера синхронизации (см. server/presence-server.js)
+	if opts.SyncEndpoint and opts.SyncEndpoint ~= "" then
+		Library.SyncEndpoint = opts.SyncEndpoint
+	end
+	window._logo = opts.Logo or string.upper(string.sub(title, 1, 2))
+	window:_initSyncTags()
 	window:_buildProfileMenu()
-
-	-- Synchronization: раз в 2 секунды пишем изменения; сохранённое восстанавливаем
-	-- через Library:LoadSynced() в конце лоудера (или сами через секунду, если его не вызвали).
-	task.spawn(function()
-		while gui.Parent do
-			task.wait(2)
-			Library:_writeSync()
-		end
-	end)
-	task.delay(1, function()
-		Library:LoadSynced()
-	end)
 	return window
 end
 
@@ -4412,6 +4637,10 @@ function Library:Notify(opts)
 end
 
 function Library:Unload()
+	if self.Settings.Sync then
+		-- сообщаем серверу, что ушли, чтобы у других значок пропал сразу
+		task.spawn(syncPost, "/leave", { userId = LocalPlayer.UserId, jobId = currentJobId() })
+	end
 	for i = #Library.Windows, 1, -1 do
 		Library.Windows[i]:Destroy()
 	end
