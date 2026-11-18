@@ -18,7 +18,7 @@ local Stats = game:GetService("Stats")
 local LocalPlayer = Players.LocalPlayer
 
 local Library = {
-	Version = "1.2.0",
+	Version = "1.3.0",
 	Flags = {},
 	Windows = {},
 	Keybinds = {},
@@ -2009,11 +2009,182 @@ function Window:_startWidgetLoop()
 	end)
 end
 
+-- Цвета виджетов (по референсам: тёмная капсула, светло-серый текст, иконки цветом акцента).
+local WIDGET_BG = Color3.fromRGB(13, 14, 19)
+local WIDGET_TEXT = Color3.fromRGB(200, 202, 214)
+
+----------------------------------------------------------------------
+-- Мини-иконки 12×12 из примитивов (без картинок-ассетов).
+-- Части, помеченные атрибутом "IconPart", перекрашиваются в акцент.
+----------------------------------------------------------------------
+
+local function iconPart(parent, x, y, w, h, radius, color)
+	local part = create("Frame", {
+		BackgroundColor3 = color or Theme.Accent,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(x, y),
+		Size = UDim2.fromOffset(w, h),
+		Parent = parent,
+	})
+	if radius and radius > 0 then
+		corner(radius).Parent = part
+	end
+	if not color then
+		part:SetAttribute("IconPart", true)
+	end
+	return part
+end
+
+local function iconRing(parent, x, y, w, h, thickness, radius)
+	local ring = create("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(x, y),
+		Size = UDim2.fromOffset(w, h),
+		Parent = parent,
+	}, { corner(radius or math.floor(math.min(w, h) / 2)) })
+	local ringStroke = stroke(Theme.Accent, 0, thickness or 1.5)
+	ringStroke:SetAttribute("IconPart", true)
+	ringStroke.Parent = ring
+	return ring
+end
+
+local IconDrawers = {
+	-- пинг: столбики сигнала
+	bars = function(f)
+		iconPart(f, 0, 7, 3, 4, 1)
+		iconPart(f, 4.5, 4, 3, 7, 1)
+		iconPart(f, 9, 1, 3, 10, 1)
+	end,
+	-- FPS: монитор
+	monitor = function(f)
+		iconRing(f, 0.5, 0.5, 11, 8, 1.5, 2)
+		iconPart(f, 3.5, 10, 5, 1.5, 1)
+	end,
+	-- время: часы
+	clock = function(f)
+		iconRing(f, 0.5, 0.5, 11, 11, 1.5)
+		iconPart(f, 5.25, 3, 1.5, 3.5, 1)
+		iconPart(f, 5.25, 5.25, 3, 1.5, 1)
+	end,
+	-- имя / игроки: человечек
+	user = function(f)
+		iconPart(f, 3.5, 0, 5, 5, 3)
+		iconPart(f, 1, 6.5, 10, 5.5, 3)
+	end,
+	-- память: чип
+	chip = function(f)
+		iconRing(f, 1.5, 1.5, 9, 9, 1.5, 2)
+		iconPart(f, 4.5, 4.5, 3, 3, 1)
+	end,
+	-- K/D: прицел
+	crosshair = function(f)
+		iconRing(f, 1.5, 1.5, 9, 9, 1.5)
+		iconPart(f, 5, 5, 2, 2, 1)
+		iconPart(f, 5.25, -0.5, 1.5, 3, 0)
+		iconPart(f, 5.25, 9.5, 1.5, 3, 0)
+		iconPart(f, -0.5, 5.25, 3, 1.5, 0)
+		iconPart(f, 9.5, 5.25, 3, 1.5, 0)
+	end,
+	-- скорость: две стрелки
+	speed = function(f)
+		-- две «›» из повёрнутых палочек
+		for _, x in ipairs({ 1, 6 }) do
+			iconPart(f, x + 1.25, 1, 1.6, 5, 1).Rotation = -45
+			iconPart(f, x + 1.25, 5, 1.6, 5, 1).Rotation = 45
+		end
+	end,
+	-- шапка Hotkeys: список
+	list = function(f)
+		for i, y in ipairs({ 1, 5, 9 }) do
+			iconPart(f, 0, y, 2.5, 2.5, 1)
+			iconPart(f, 4, y, i == 2 and 6 or 8, 2.5, 1)
+		end
+	end,
+	-- шапка Spectators: глаз
+	eye = function(f)
+		iconRing(f, 0, 2, 12, 8, 1.5, 4)
+		iconPart(f, 4, 4, 4, 4, 2)
+	end,
+}
+
+local function drawIcon(name, parent, order)
+	local frame = create("Frame", {
+		Name = "Icon",
+		BackgroundTransparency = 1,
+		Size = UDim2.fromOffset(12, 12),
+		LayoutOrder = order or 0,
+		Parent = parent,
+	})
+	local drawer = IconDrawers[name]
+	if drawer then
+		drawer(frame)
+	end
+	return frame
+end
+
+local function paintIcons(root, color)
+	for _, item in ipairs(root:GetDescendants()) do
+		if item:GetAttribute("IconPart") then
+			if item:IsA("UIStroke") then
+				item.Color = color
+			elseif item:IsA("GuiObject") then
+				item.BackgroundColor3 = color
+			end
+		end
+	end
+end
+
+-- Мини-переключатель для строк Hotkeys: залитый (toggle), контурный (hold), тусклый (выкл).
+local function drawSwitch(parent, order, kind)
+	local holder = create("Frame", {
+		Name = "Switch",
+		BackgroundTransparency = 1,
+		Size = UDim2.fromOffset(16, 12),
+		LayoutOrder = order,
+		Parent = parent,
+	})
+	local pill = create("Frame", {
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 0, 0.5, 0),
+		Size = UDim2.fromOffset(16, 9),
+		BackgroundColor3 = WIDGET_TEXT,
+		BackgroundTransparency = kind == "toggle" and 0 or 1,
+		Parent = holder,
+	}, { corner(5) })
+	if kind ~= "toggle" then
+		stroke(kind == "off" and Theme.Muted or WIDGET_TEXT, 0, 1.2).Parent = pill
+	end
+	local knobOn = kind ~= "off"
+	create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0, knobOn and 11.5 or 4.5, 0.5, 0),
+		Size = UDim2.fromOffset(5, 5),
+		BackgroundColor3 = kind == "toggle" and WIDGET_BG or (kind == "off" and Theme.Muted or WIDGET_TEXT),
+		Parent = pill,
+	}, { corner(3) })
+	return holder
+end
+
+----------------------------------------------------------------------
+-- Watermark: капсула «NC  [иконка] 24 MS  [иконка] 60 FPS ... (аватар)»
+----------------------------------------------------------------------
+
+local WATERMARK_ITEMS = {
+	Name = { icon = "user" },
+	Framerate = { icon = "monitor" },
+	Latency = { icon = "bars" },
+	Speed = { icon = "speed" },
+	Memory = { icon = "chip" },
+	["KD Ratio"] = { icon = "crosshair" },
+	Players = { icon = "user" },
+	Time = { icon = "clock" },
+}
+
 function Window:CreateWatermark(opts)
 	opts = opts or {}
 	local watermark = {
 		Visible = opts.Visible ~= false,
-		Items = opts.Items or { "Logo", "Name", "Framerate", "Latency", "Time" },
+		Items = opts.Items or { "Logo", "Latency", "Framerate", "Time", "Name" },
 		Avatar = opts.Avatar ~= false,
 		Accent = opts.Accent or Theme.Accent,
 		Title = opts.Title or "NC",
@@ -2021,7 +2192,8 @@ function Window:CreateWatermark(opts)
 
 	local frame = create("Frame", {
 		Name = "Watermark",
-		BackgroundColor3 = Theme.Panel,
+		BackgroundColor3 = WIDGET_BG,
+		BackgroundTransparency = 0.08,
 		AnchorPoint = Vector2.new(1, 0),
 		Position = opts.Position or UDim2.new(1, -16, 0, 16),
 		Size = UDim2.fromOffset(0, 30),
@@ -2029,80 +2201,103 @@ function Window:CreateWatermark(opts)
 		Visible = false,
 		Parent = self.widgetLayer,
 	}, {
-		corner(8),
-		stroke(Theme.Stroke, 0.3, 1),
-		padding(10, 0, 12, 0),
-		listLayout(8, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center),
+		corner(15),
+		stroke(Theme.Stroke, 0.55, 1),
+		padding(14, 0, 5, 0),
+		listLayout(14, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center),
 	})
+
 	local logo = label({
 		Text = watermark.Title,
 		Font = FONT_BOLD,
 		TextSize = TEXT_MD,
-		TextColor3 = watermark.Accent,
+		TextColor3 = WIDGET_TEXT,
 		AutomaticSize = Enum.AutomaticSize.X,
 		Size = UDim2.fromOffset(0, 18),
-		LayoutOrder = 1,
+		LayoutOrder = 0,
 		Parent = frame,
 	})
+
+	local groups = {}
+	for item, info in pairs(WATERMARK_ITEMS) do
+		local group = create("Frame", {
+			Name = item,
+			BackgroundTransparency = 1,
+			Size = UDim2.fromOffset(0, 18),
+			AutomaticSize = Enum.AutomaticSize.X,
+			Visible = false,
+			Parent = frame,
+		}, { listLayout(6, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center) })
+		drawIcon(info.icon, group, 1)
+		local text = label({
+			Font = FONT_BOLD,
+			TextSize = TEXT_SM - 1,
+			TextColor3 = WIDGET_TEXT,
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.fromOffset(0, 18),
+			LayoutOrder = 2,
+			Parent = group,
+		})
+		groups[item] = { frame = group, text = text }
+	end
+
 	local avatar = create("ImageLabel", {
 		BackgroundColor3 = Theme.NavActive,
 		Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(LocalPlayer.UserId) .. "&w=48&h=48",
-		Size = UDim2.fromOffset(18, 18),
-		LayoutOrder = 2,
+		Size = UDim2.fromOffset(22, 22),
+		LayoutOrder = 1000,
 		Parent = frame,
-	}, { corner(9) })
-	local info = label({
-		RichText = true,
-		TextSize = TEXT_SM,
-		TextColor3 = Theme.TextStrong,
-		AutomaticSize = Enum.AutomaticSize.X,
-		Size = UDim2.fromOffset(0, 18),
-		LayoutOrder = 3,
-		Parent = frame,
-	})
+	}, { corner(11) })
+	local avatarStroke = stroke(watermark.Accent, 0.35, 1.5)
+	avatarStroke.Parent = avatar
+
 	self:_draggable(frame)
 
-	local function has(item)
-		return table.find(watermark.Items, item) ~= nil
+	local function valueFor(item, state)
+		if item == "Name" then
+			return LocalPlayer.Name
+		elseif item == "Framerate" then
+			return tostring(state.fps) .. " FPS"
+		elseif item == "Latency" then
+			local ping = getPing()
+			return ping and (ping .. " MS") or nil
+		elseif item == "Speed" then
+			local speed = getSpeed()
+			return speed and (speed .. " ST/S") or nil
+		elseif item == "Memory" then
+			local memory = getMemory()
+			return memory and (memory .. " MB") or nil
+		elseif item == "KD Ratio" then
+			local kd = getKD()
+			return kd and (kd .. " KD") or nil
+		elseif item == "Players" then
+			return #Players:GetPlayers() .. " PLAYERS"
+		elseif item == "Time" then
+			return os.date("%H:%M:%S")
+		end
+		return nil
 	end
 
 	function watermark:_update(state)
-		local segments = {}
-		local function add(text)
-			if text then
-				table.insert(segments, text)
+		local anyShown = false
+		for item, group in pairs(groups) do
+			group.frame.Visible = false
+		end
+		for index, item in ipairs(self.Items) do
+			local group = groups[item]
+			if group then
+				local value = valueFor(item, state)
+				if value then
+					group.text.Text = value
+					group.frame.LayoutOrder = index
+					group.frame.Visible = true
+					anyShown = true
+				end
 			end
 		end
-		-- порядок как в списке пунктов
-		for _, item in ipairs(self.Items) do
-			if item == "Name" then
-				add(LocalPlayer.DisplayName)
-			elseif item == "Framerate" then
-				add(tostring(state.fps) .. " fps")
-			elseif item == "Latency" then
-				local ping = getPing()
-				add(ping and (ping .. " ms") or nil)
-			elseif item == "Speed" then
-				local speed = getSpeed()
-				add(speed and (speed .. " st/s") or nil)
-			elseif item == "Memory" then
-				local memory = getMemory()
-				add(memory and (memory .. " MB") or nil)
-			elseif item == "KD Ratio" then
-				local kd = getKD()
-				add(kd and ("KD " .. kd) or nil)
-			elseif item == "Players" then
-				add(#Players:GetPlayers() .. " players")
-			elseif item == "Time" then
-				add(os.date("%H:%M:%S"))
-			end
-		end
-		local separator = string.format('<font color="%s">  |  </font>', hex(Theme.Muted))
-		info.Text = table.concat(segments, separator)
-		info.Visible = #segments > 0
-		logo.Visible = has("Logo")
+		logo.Visible = table.find(self.Items, "Logo") ~= nil
 		avatar.Visible = self.Avatar
-		frame.Visible = self.Visible and (logo.Visible or avatar.Visible or info.Visible)
+		frame.Visible = self.Visible and (anyShown or logo.Visible or avatar.Visible)
 	end
 
 	function watermark:SetVisible(visible)
@@ -2116,17 +2311,22 @@ function Window:CreateWatermark(opts)
 	end
 	function watermark:SetAccent(color)
 		self.Accent = color
-		logo.TextColor3 = color
+		avatarStroke.Color = color
+		paintIcons(frame, color)
 	end
 	watermark.Frame = frame
 
+	watermark:SetAccent(watermark.Accent)
 	table.insert(self._widgets, watermark)
 	self:_startWidgetLoop()
 	return watermark
 end
 
--- Общий виджет-список (для Hotkeys и Spectators).
-function Window:_listWidget(name, title, position)
+----------------------------------------------------------------------
+-- Список (Hotkeys / Spectators): шапка «иконка + заголовок», строки «значок + имя».
+----------------------------------------------------------------------
+
+function Window:_listWidget(name, title, position, headerIcon)
 	local widget = {
 		Visible = true,
 		Style = "Default",
@@ -2139,60 +2339,63 @@ function Window:_listWidget(name, title, position)
 
 	local frame = create("Frame", {
 		Name = name,
-		BackgroundColor3 = Theme.Panel,
+		BackgroundColor3 = WIDGET_BG,
+		BackgroundTransparency = 0.25,
 		Position = position,
-		Size = UDim2.fromOffset(200, 0),
+		Size = UDim2.fromOffset(190, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		Visible = false,
 		Parent = self.widgetLayer,
-	}, { corner(8), stroke(Theme.Stroke, 0.3, 1) })
+	}, { corner(8), stroke(Theme.Stroke, 0.7, 1) })
+
 	local header = create("Frame", {
+		Name = "Header",
 		BackgroundColor3 = Theme.Accent,
 		BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, 28),
+		Size = UDim2.new(1, 0, 0, 30),
 		Parent = frame,
-	}, { corner(8) })
-	local accentLine = create("Frame", {
-		BackgroundColor3 = Theme.Accent,
-		BorderSizePixel = 0,
-		Position = UDim2.fromOffset(12, 0),
-		Size = UDim2.new(1, -24, 0, 2),
-		Parent = frame,
-	}, { corner(1) })
+	}, { corner(8), padding(12, 0, 12, 0) })
+	local headerLayout = listLayout(10, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center)
+	headerLayout.Parent = header
+	local icon = drawIcon(headerIcon, header, 1)
 	local titleLabel = label({
 		Text = title,
-		Font = FONT_MEDIUM,
-		TextSize = TEXT_SM,
-		TextColor3 = Theme.Title,
-		TextXAlignment = Enum.TextXAlignment.Center,
-		Size = UDim2.fromScale(1, 1),
+		Font = FONT_BOLD,
+		TextSize = TEXT_MD,
+		TextColor3 = WIDGET_TEXT,
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.fromOffset(0, 18),
+		LayoutOrder = 2,
 		Parent = header,
 	})
+
 	local body = create("Frame", {
+		Name = "Rows",
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(0, 28),
+		Position = UDim2.fromOffset(0, 30),
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		Parent = frame,
-	}, { padding(12, 0, 12, 8), listLayout(0) })
+	}, { padding(12, 0, 12, 8), listLayout(2) })
 	self:_draggable(frame)
 
-	local function rowHeight()
-		return widget.Style == "Compact" and 18 or 22
+	local function compact()
+		return widget.Style == "Compact"
 	end
 
 	local function applyStyle()
-		local compact = widget.Style == "Compact"
 		local inverted = widget.Style == "Inverted"
-		local headerHeight = compact and 22 or 28
+		local headerHeight = compact() and 24 or 30
 		header.Size = UDim2.new(1, 0, 0, headerHeight)
 		body.Position = UDim2.fromOffset(0, headerHeight)
 		header.BackgroundColor3 = widget.Accent
 		header.BackgroundTransparency = inverted and 0 or 1
-		titleLabel.TextColor3 = inverted and Theme.Window or Theme.Title
-		titleLabel.TextSize = compact and TEXT_XS + 1 or TEXT_SM
-		accentLine.Visible = not inverted
-		accentLine.BackgroundColor3 = widget.Accent
+		titleLabel.TextColor3 = inverted and WIDGET_BG or WIDGET_TEXT
+		titleLabel.TextSize = compact() and TEXT_SM or TEXT_MD
+		paintIcons(icon, inverted and WIDGET_BG or widget.Accent)
+		local alignment = widget.RightAligned and Enum.HorizontalAlignment.Right or Enum.HorizontalAlignment.Left
+		headerLayout.HorizontalAlignment = alignment
+		icon.LayoutOrder = widget.RightAligned and 3 or 1
 	end
 
 	local function rebuild(entries, placeholder)
@@ -2203,10 +2406,11 @@ function Window:_listWidget(name, title, position)
 		end
 		local list = entries
 		if #list == 0 and placeholder then
-			list = { { Name = "None", Dim = true } }
+			list = { { Name = "None", Icon = "off", Dim = true } }
 		end
-		local height = rowHeight()
-		local textSize = widget.Style == "Compact" and TEXT_XS + 1 or TEXT_SM
+		local height = compact() and 18 or 22
+		local textSize = compact() and TEXT_SM - 1 or TEXT_SM
+		local alignment = widget.RightAligned and Enum.HorizontalAlignment.Right or Enum.HorizontalAlignment.Left
 		for index, entry in ipairs(list) do
 			local row = create("Frame", {
 				BackgroundTransparency = 1,
@@ -2214,48 +2418,34 @@ function Window:_listWidget(name, title, position)
 				LayoutOrder = index,
 				Parent = body,
 			})
-			local offset = 0
+			local rowLayout = listLayout(12, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center)
+			rowLayout.HorizontalAlignment = alignment
+			rowLayout.Parent = row
+			local markerOrder = widget.RightAligned and 2 or 1
 			if entry.Image then
 				local image = create("ImageLabel", {
 					BackgroundColor3 = Theme.NavActive,
 					Image = entry.Image,
-					AnchorPoint = Vector2.new(widget.RightAligned and 1 or 0, 0.5),
-					Position = UDim2.new(widget.RightAligned and 1 or 0, 0, 0.5, 0),
-					Size = UDim2.fromOffset(height - 6, height - 6),
+					Size = UDim2.fromOffset(16, 16),
+					LayoutOrder = markerOrder,
 					Parent = row,
-				})
-				corner(math.floor((height - 6) / 2)).Parent = image
-				offset = height
+				}, { corner(8) })
+				local imageStroke = stroke(widget.Accent, 0.4, 1)
+				imageStroke.Parent = image
+			else
+				drawSwitch(row, markerOrder, entry.Icon or "toggle")
 			end
-			local nameLabel = label({
+			label({
 				Text = entry.Name,
+				Font = FONT_MEDIUM,
 				TextSize = textSize,
-				TextColor3 = entry.Dim and Theme.Muted or Theme.TextStrong,
+				TextColor3 = entry.Dim and Theme.Muted or WIDGET_TEXT,
 				TextTruncate = Enum.TextTruncate.AtEnd,
 				TextXAlignment = widget.RightAligned and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left,
-				Position = UDim2.fromOffset(widget.RightAligned and 0 or offset, 0),
-				Size = UDim2.new(1, -offset, 1, 0),
+				Size = UDim2.new(1, -28, 1, 0),
+				LayoutOrder = widget.RightAligned and 1 or 2,
 				Parent = row,
 			})
-			if entry.Value then
-				local valueLabel = label({
-					Text = entry.Value,
-					TextSize = textSize - 1,
-					TextColor3 = entry.Dim and Theme.Muted or widget.Accent,
-					AutomaticSize = Enum.AutomaticSize.X,
-					AnchorPoint = Vector2.new(widget.RightAligned and 0 or 1, 0),
-					Position = UDim2.fromScale(widget.RightAligned and 0 or 1, 0),
-					Size = UDim2.new(0, 0, 1, 0),
-					TextXAlignment = widget.RightAligned and Enum.TextXAlignment.Left or Enum.TextXAlignment.Right,
-					Parent = row,
-				})
-				if widget.RightAligned then
-					valueLabel.Position = UDim2.fromScale(0, 0)
-					-- значение слева, имя справа — оставляем имени место под значение
-					nameLabel.Position = UDim2.fromOffset(0, 0)
-					nameLabel.Size = UDim2.new(1, -offset, 1, 0)
-				end
-			end
 		end
 	end
 
@@ -2263,7 +2453,7 @@ function Window:_listWidget(name, title, position)
 		self.Entries = entries
 		local parts = { self.Style, tostring(self.RightAligned), tostring(state.menuOpen) }
 		for _, entry in ipairs(entries) do
-			table.insert(parts, tostring(entry.Name) .. "=" .. tostring(entry.Value) .. tostring(entry.Dim))
+			table.insert(parts, tostring(entry.Name) .. "=" .. tostring(entry.Icon) .. tostring(entry.Dim))
 		end
 		local signature = table.concat(parts, "|")
 		if signature ~= self._signature then
@@ -2271,7 +2461,7 @@ function Window:_listWidget(name, title, position)
 			rebuild(entries, state.menuOpen)
 		end
 		local count = #entries
-		titleLabel.Text = self.Dynamic and string.format("%s (%d)", title, count) or title
+		titleLabel.Text = (self.Dynamic and count > 0) and string.format("%s  %d", title, count) or title
 		-- Dynamic: пустой список прячется, пока меню закрыто
 		frame.Visible = self.Visible and (count > 0 or state.menuOpen or not self.Dynamic)
 	end
@@ -2287,6 +2477,7 @@ function Window:_listWidget(name, title, position)
 	function widget:SetRightAligned(enabled)
 		self.RightAligned = enabled
 		self._signature = nil
+		applyStyle()
 	end
 	function widget:SetDynamic(enabled)
 		self.Dynamic = enabled
@@ -2307,7 +2498,7 @@ end
 function Window:CreateHotkeyList(opts)
 	opts = opts or {}
 	local window = self
-	local widget = self:_listWidget("Hotkeys", opts.Title or "Hotkeys", opts.Position or UDim2.fromOffset(16, 260))
+	local widget = self:_listWidget("Hotkeys", opts.Title or "Hotkeys", opts.Position or UDim2.fromOffset(16, 260), "list")
 	widget.ShowAll = opts.ShowAll == true
 	widget.Visible = opts.Visible ~= false
 
@@ -2319,14 +2510,13 @@ function Window:CreateHotkeyList(opts)
 		local entries = {}
 		for _, keybind in ipairs(Library.Keybinds) do
 			if keybind.Window == window and keybind.Target and keybind.Value then
-				local active = keybind:IsActive()
-				if active then
+				if keybind:IsActive() then
 					table.insert(entries, {
 						Name = keybind.Target.Name,
-						Value = keybind.Mode == "Hold" and "[holding]" or "[toggled]",
+						Icon = keybind.Mode == "Hold" and "hold" or "toggle",
 					})
 				elseif self.ShowAll then
-					table.insert(entries, { Name = keybind.Target.Name, Value = "[" .. keybind.Value.Name .. "]", Dim = true })
+					table.insert(entries, { Name = keybind.Target.Name, Icon = "off", Dim = true })
 				end
 			end
 		end
@@ -2338,7 +2528,7 @@ end
 
 function Window:CreateSpectatorList(opts)
 	opts = opts or {}
-	local widget = self:_listWidget("Spectators", opts.Title or "Spectators", opts.Position or UDim2.fromOffset(16, 420))
+	local widget = self:_listWidget("Spectators", opts.Title or "Spectators", opts.Position or UDim2.fromOffset(16, 420), "eye")
 	widget.Visible = opts.Visible ~= false
 
 	function widget:_update(state)
@@ -2352,7 +2542,6 @@ function Window:CreateSpectatorList(opts)
 			if typeof(player) == "Instance" and player:IsA("Player") then
 				table.insert(entries, {
 					Name = player.DisplayName,
-					Value = "@" .. player.Name,
 					Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(player.UserId) .. "&w=48&h=48",
 				})
 			end
