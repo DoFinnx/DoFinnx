@@ -459,14 +459,27 @@ function Container:AddSlider(opts)
 		BackgroundColor3 = Theme.Thumb,
 		Parent = track,
 	}, { corner(6) })
-	local valueText = label({
+	-- Значение справа — поле ввода: клик, ввести число, Enter.
+	local valueBox = create("TextBox", {
+		BackgroundColor3 = Theme.Field,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Font = FONT,
 		TextSize = TEXT_SM,
 		TextColor3 = Theme.Muted,
 		TextXAlignment = Enum.TextXAlignment.Right,
-		Size = UDim2.fromOffset(opts.ValueWidth or 42, 16),
+		ClearTextOnFocus = false,
+		Text = "",
+		Size = UDim2.fromOffset(opts.ValueWidth or 46, 20),
 		LayoutOrder = 1001,
 		Parent = acc,
-	})
+	}, { corner(4), padding(4, 0, 4, 0) })
+	local valueStroke = stroke(Theme.Accent, 1, 1)
+	valueStroke.Parent = valueBox
+
+	local function formatValue(value)
+		return string.format("%." .. decimals .. "f", value)
+	end
 
 	function slider:Set(value, silent)
 		value = math.clamp(value, min, max)
@@ -477,7 +490,9 @@ function Container:AddSlider(opts)
 		local alpha = (max > min) and (value - min) / (max - min) or 0
 		fill.Size = UDim2.fromScale(alpha, 1)
 		handle.Position = UDim2.fromScale(alpha, 0.5)
-		valueText.Text = string.format("%." .. decimals .. "f", value) .. suffix
+		if not valueBox:IsFocused() then
+			valueBox.Text = formatValue(value) .. suffix
+		end
 		setFlag(opts.Flag, value)
 		if changed and not silent then
 			safeCall(opts.Callback, value)
@@ -487,6 +502,34 @@ function Container:AddSlider(opts)
 	function slider:Get()
 		return self.Value
 	end
+
+	valueBox.MouseEnter:Connect(function()
+		if not valueBox:IsFocused() then
+			tween(valueBox, 0.12, { TextColor3 = Theme.TextStrong })
+		end
+	end)
+	valueBox.MouseLeave:Connect(function()
+		if not valueBox:IsFocused() then
+			tween(valueBox, 0.12, { TextColor3 = Theme.Muted })
+		end
+	end)
+	valueBox.Focused:Connect(function()
+		valueBox.Text = formatValue(slider.Value) -- без суффикса, только число
+		valueBox.SelectionStart = 1
+		valueBox.CursorPosition = #valueBox.Text + 1
+		tween(valueBox, 0.12, { BackgroundTransparency = 0, TextColor3 = Theme.TextStrong })
+		tween(valueStroke, 0.12, { Transparency = 0.4 })
+	end)
+	valueBox.FocusLost:Connect(function()
+		local cleaned = valueBox.Text:gsub(",", "."):gsub("[^%d%.%-]", "")
+		local number = tonumber(cleaned)
+		tween(valueBox, 0.12, { BackgroundTransparency = 1, TextColor3 = Theme.Muted })
+		tween(valueStroke, 0.12, { Transparency = 1 })
+		if number then
+			slider:Set(number)
+		end
+		valueBox.Text = formatValue(slider.Value) .. suffix
+	end)
 
 	local dragging = false
 	local function updateFromX(x)
