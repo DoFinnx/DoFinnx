@@ -1,10 +1,12 @@
 --[[
-	Лоудер: загружает Library.lua и собирает меню по макету.
-	Только интерфейс — у элементов нет игровых функций (Callback пустые).
+	Лоудер Nocturne UI: загружает библиотеку (NLlib.lua) и собирает меню.
 
-	1) Выложите Library.lua куда-нибудь с прямой (raw) ссылкой и подставьте её в LIBRARY_URL.
-	2) В Roblox Studio можно без ссылки: положите Library.lua как ModuleScript "Library"
-	   рядом с этим LocalScript — тогда сработает require.
+	Запуск в инжекторе (этот файл лежит на GitHub как script.lua):
+	    loadstring(game:HttpGet("https://raw.githubusercontent.com/DoFinnx/DoFinnx/refs/heads/main/script.lua"))()
+
+	Повторный запуск закрывает уже открытое меню и открывает новое.
+	В Roblox Studio можно без ссылок: положите библиотеку как ModuleScript "Library"
+	рядом с этим LocalScript — тогда сработает require.
 ]]
 
 local LIBRARY_URL = "https://raw.githubusercontent.com/DoFinnx/DoFinnx/refs/heads/main/NLlib.lua"
@@ -21,8 +23,10 @@ local function loadLibrary()
 	assert(loadstring, "loadstring недоступен: используйте вариант с ModuleScript")
 
 	-- Скачиваем отдельно, чтобы при ошибке было видно, что именно пошло не так.
+	-- ?t=<время> — в обход кэша GitHub, чтобы обновления библиотеки подхватывались сразу
+	local separator = string.find(LIBRARY_URL, "?", 1, true) and "&" or "?"
 	local ok, source = pcall(function()
-		return game:HttpGet(LIBRARY_URL)
+		return game:HttpGet(LIBRARY_URL .. separator .. "t=" .. tostring(os.time()))
 	end)
 	if not ok or type(source) ~= "string" then
 		error("[Nocturne UI] не удалось скачать библиотеку: " .. tostring(source), 0)
@@ -62,6 +66,18 @@ end
 
 local Library = loadLibrary()
 print("[Nocturne UI] version " .. tostring(Library.Version))
+
+-- Если скрипт запускают повторно, закрываем предыдущее меню, чтобы не было двух окон.
+do
+	local env = (type(getgenv) == "function" and getgenv()) or _G
+	local previous = env.NocturneLibrary
+	if previous and previous ~= Library and type(previous.Unload) == "function" then
+		pcall(function()
+			previous:Unload()
+		end)
+	end
+	env.NocturneLibrary = Library
+end
 
 local WHITE = Color3.fromRGB(244, 245, 255)
 
@@ -669,6 +685,8 @@ do
 	end
 
 	-- С кэшем: один и тот же аватар не скачиваем дважды.
+	-- Если скачать не вышло, следующая попытка не раньше чем через 30 с.
+	local failedAt = {}
 	local function getAppearance(userId)
 		local cached = appearanceCache[userId]
 		if cached then
@@ -676,13 +694,17 @@ do
 		end
 		if cached == false then
 			repeat
-				task.wait(0.2)
+				task.wait(0.1)
 			until appearanceCache[userId] ~= false
 			return appearanceCache[userId]
 		end
+		if failedAt[userId] and os.clock() - failedAt[userId] < 30 then
+			return nil
+		end
 		appearanceCache[userId] = false
 		local model = fetchAppearance(userId)
-		appearanceCache[userId] = model -- nil при ошибке: попробуем снова позже
+		appearanceCache[userId] = model
+		failedAt[userId] = not model and os.clock() or nil
 		return model
 	end
 
