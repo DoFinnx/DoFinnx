@@ -18,7 +18,7 @@ local Stats = game:GetService("Stats")
 local LocalPlayer = Players.LocalPlayer
 
 local Library = {
-	Version = "1.10.0",
+	Version = "1.11.0",
 	Flags = {},
 	Windows = {},
 	Keybinds = {},
@@ -4116,7 +4116,10 @@ local function syncPost(path, body)
 	return data
 end
 
-function Library:_setSyncUsers(list)
+Library.SyncModels = {} -- [UserId] = { userId = чей аватар, parts = { ... } } — модели других пользователей
+Library.SyncModel = nil -- своя кастомная модель, которую видят другие пользователи скрипта
+
+function Library:_setSyncUsers(list, rawModels)
 	local users, joined = {}, {}
 	for _, raw in ipairs(list or {}) do
 		local id = tonumber(raw)
@@ -4127,15 +4130,55 @@ function Library:_setSyncUsers(list)
 			end
 		end
 	end
+	local models = {}
+	if type(rawModels) == "table" then
+		for key, info in pairs(rawModels) do
+			local id = tonumber(key)
+			local modelUserId = type(info) == "table" and tonumber(info.userId)
+			if id and users[id] and modelUserId then
+				models[id] = {
+					userId = modelUserId,
+					parts = type(info.parts) == "table" and info.parts or nil,
+				}
+			end
+		end
+	end
 	self.SyncUsers = users
+	self.SyncModels = models
 	for _, listener in ipairs(self._syncListeners) do
-		pcall(listener, users, joined)
+		pcall(listener, users, joined, models)
 	end
 end
 
--- Подписка: fn(users, joinedIds) вызывается после каждого обновления списка.
+-- Подписка: fn(users, joinedIds, models) вызывается после каждого обновления списка.
 function Library:OnSyncUsers(callback)
 	table.insert(self._syncListeners, callback)
+end
+
+-- Одна отметка на сервере: отправляем себя (и свою модель), получаем остальных.
+function Library:_heartbeat()
+	local data, err = syncPost("/presence", {
+		userId = LocalPlayer.UserId,
+		jobId = currentJobId(),
+		placeId = game.PlaceId,
+		model = self.SyncModel,
+	})
+	if data and type(data.users) == "table" then
+		self:_setSyncUsers(data.users, data.models)
+		return true
+	end
+	return false, err
+end
+
+-- Своя кастомная модель для других пользователей: { userId = ..., parts = { ... } } или nil.
+-- Отправляется сразу, не дожидаясь следующей отметки.
+function Library:SetSyncModel(model)
+	self.SyncModel = model
+	if self.Settings.Sync then
+		task.spawn(function()
+			self:_heartbeat()
+		end)
+	end
 end
 
 function Library:SetSync(enabled)
@@ -4154,14 +4197,9 @@ function Library:SetSync(enabled)
 	task.spawn(function()
 		local reportedError = nil
 		while self.Settings.Sync and #self.Windows > 0 do
-			local data, err = syncPost("/presence", {
-				userId = LocalPlayer.UserId,
-				jobId = currentJobId(),
-				placeId = game.PlaceId,
-			})
-			if data and type(data.users) == "table" then
+			local ok, err = self:_heartbeat()
+			if ok then
 				reportedError = nil
-				self:_setSyncUsers(data.users)
 			elseif err ~= reportedError then
 				-- о каждой новой ошибке сообщаем один раз
 				reportedError = err
