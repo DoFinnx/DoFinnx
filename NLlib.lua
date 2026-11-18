@@ -18,7 +18,7 @@ local Stats = game:GetService("Stats")
 local LocalPlayer = Players.LocalPlayer
 
 local Library = {
-	Version = "1.3.0",
+	Version = "1.4.0",
 	Flags = {},
 	Windows = {},
 	Keybinds = {},
@@ -2139,26 +2139,26 @@ local function drawSwitch(parent, order, kind)
 	local holder = create("Frame", {
 		Name = "Switch",
 		BackgroundTransparency = 1,
-		Size = UDim2.fromOffset(16, 12),
+		Size = UDim2.fromOffset(20, 14),
 		LayoutOrder = order,
 		Parent = parent,
 	})
 	local pill = create("Frame", {
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 0, 0.5, 0),
-		Size = UDim2.fromOffset(16, 9),
-		BackgroundColor3 = WIDGET_TEXT,
+		Size = UDim2.fromOffset(20, 11),
+		BackgroundColor3 = Theme.Title,
 		BackgroundTransparency = kind == "toggle" and 0 or 1,
 		Parent = holder,
-	}, { corner(5) })
+	}, { corner(6) })
 	if kind ~= "toggle" then
-		stroke(kind == "off" and Theme.Muted or WIDGET_TEXT, 0, 1.2).Parent = pill
+		stroke(kind == "off" and Theme.Muted or Theme.Title, 0, 1.4).Parent = pill
 	end
 	local knobOn = kind ~= "off"
 	create("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.new(0, knobOn and 11.5 or 4.5, 0.5, 0),
-		Size = UDim2.fromOffset(5, 5),
+		Position = UDim2.new(0, knobOn and 14.5 or 5.5, 0.5, 0),
+		Size = UDim2.fromOffset(6, 6),
 		BackgroundColor3 = kind == "toggle" and WIDGET_BG or (kind == "off" and Theme.Muted or WIDGET_TEXT),
 		Parent = pill,
 	}, { corner(3) })
@@ -2337,34 +2337,48 @@ function Window:_listWidget(name, title, position, headerIcon)
 		_signature = nil,
 	}
 
+	-- Без рамки: только мягкое затемнение, уходящее в прозрачность (как на референсе).
 	local frame = create("Frame", {
 		Name = name,
 		BackgroundColor3 = WIDGET_BG,
-		BackgroundTransparency = 0.25,
+		BackgroundTransparency = 0.3,
+		BorderSizePixel = 0,
 		Position = position,
-		Size = UDim2.fromOffset(190, 0),
+		Size = UDim2.fromOffset(240, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		Visible = false,
 		Parent = self.widgetLayer,
-	}, { corner(8), stroke(Theme.Stroke, 0.7, 1) })
+	}, { corner(8) })
+	local fade = create("UIGradient", {
+		Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0),
+			NumberSequenceKeypoint.new(0.55, 0.35),
+			NumberSequenceKeypoint.new(1, 1),
+		}),
+		Parent = frame,
+	})
 
 	local header = create("Frame", {
 		Name = "Header",
 		BackgroundColor3 = Theme.Accent,
 		BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, 30),
+		Size = UDim2.new(1, 0, 0, 36),
 		Parent = frame,
-	}, { corner(8), padding(12, 0, 12, 0) })
-	local headerLayout = listLayout(10, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center)
+	}, { corner(8), padding(14, 0, 14, 0) })
+	local headerLayout = listLayout(12, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center)
 	headerLayout.Parent = header
 	local icon = drawIcon(headerIcon, header, 1)
+	create("UIScale", { Scale = 1.3, Parent = icon })
+	icon.Size = UDim2.fromOffset(12, 12)
 	local titleLabel = label({
 		Text = title,
 		Font = FONT_BOLD,
-		TextSize = TEXT_MD,
+		TextSize = 15,
 		TextColor3 = WIDGET_TEXT,
+		TextStrokeColor3 = Color3.new(0, 0, 0),
+		TextStrokeTransparency = 0.8,
 		AutomaticSize = Enum.AutomaticSize.X,
-		Size = UDim2.fromOffset(0, 18),
+		Size = UDim2.fromOffset(0, 20),
 		LayoutOrder = 2,
 		Parent = header,
 	})
@@ -2372,11 +2386,11 @@ function Window:_listWidget(name, title, position, headerIcon)
 	local body = create("Frame", {
 		Name = "Rows",
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(0, 30),
+		Position = UDim2.fromOffset(0, 36),
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		Parent = frame,
-	}, { padding(12, 0, 12, 8), listLayout(2) })
+	}, { padding(14, 0, 14, 10), listLayout(2) })
 	self:_draggable(frame)
 
 	local function compact()
@@ -2385,17 +2399,18 @@ function Window:_listWidget(name, title, position, headerIcon)
 
 	local function applyStyle()
 		local inverted = widget.Style == "Inverted"
-		local headerHeight = compact() and 24 or 30
+		local headerHeight = compact() and 28 or 36
 		header.Size = UDim2.new(1, 0, 0, headerHeight)
 		body.Position = UDim2.fromOffset(0, headerHeight)
 		header.BackgroundColor3 = widget.Accent
 		header.BackgroundTransparency = inverted and 0 or 1
 		titleLabel.TextColor3 = inverted and WIDGET_BG or WIDGET_TEXT
-		titleLabel.TextSize = compact() and TEXT_SM or TEXT_MD
+		titleLabel.TextSize = compact() and TEXT_MD or 15
 		paintIcons(icon, inverted and WIDGET_BG or widget.Accent)
-		local alignment = widget.RightAligned and Enum.HorizontalAlignment.Right or Enum.HorizontalAlignment.Left
-		headerLayout.HorizontalAlignment = alignment
+		headerLayout.HorizontalAlignment = widget.RightAligned and Enum.HorizontalAlignment.Right or Enum.HorizontalAlignment.Left
 		icon.LayoutOrder = widget.RightAligned and 3 or 1
+		-- затемнение всегда со стороны текста
+		fade.Rotation = widget.RightAligned and 180 or 0
 	end
 
 	local function rebuild(entries, placeholder)
@@ -2408,8 +2423,8 @@ function Window:_listWidget(name, title, position, headerIcon)
 		if #list == 0 and placeholder then
 			list = { { Name = "None", Icon = "off", Dim = true } }
 		end
-		local height = compact() and 18 or 22
-		local textSize = compact() and TEXT_SM - 1 or TEXT_SM
+		local height = compact() and 22 or 28
+		local textSize = compact() and TEXT_SM or 14
 		local alignment = widget.RightAligned and Enum.HorizontalAlignment.Right or Enum.HorizontalAlignment.Left
 		for index, entry in ipairs(list) do
 			local row = create("Frame", {
@@ -2418,7 +2433,7 @@ function Window:_listWidget(name, title, position, headerIcon)
 				LayoutOrder = index,
 				Parent = body,
 			})
-			local rowLayout = listLayout(12, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center)
+			local rowLayout = listLayout(14, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center)
 			rowLayout.HorizontalAlignment = alignment
 			rowLayout.Parent = row
 			local markerOrder = widget.RightAligned and 2 or 1
@@ -2426,10 +2441,10 @@ function Window:_listWidget(name, title, position, headerIcon)
 				local image = create("ImageLabel", {
 					BackgroundColor3 = Theme.NavActive,
 					Image = entry.Image,
-					Size = UDim2.fromOffset(16, 16),
+					Size = UDim2.fromOffset(20, 20),
 					LayoutOrder = markerOrder,
 					Parent = row,
-				}, { corner(8) })
+				}, { corner(10) })
 				local imageStroke = stroke(widget.Accent, 0.4, 1)
 				imageStroke.Parent = image
 			else
@@ -2439,10 +2454,12 @@ function Window:_listWidget(name, title, position, headerIcon)
 				Text = entry.Name,
 				Font = FONT_MEDIUM,
 				TextSize = textSize,
-				TextColor3 = entry.Dim and Theme.Muted or WIDGET_TEXT,
+				TextColor3 = entry.Dim and Theme.Muted or Theme.Title,
+				TextStrokeColor3 = Color3.new(0, 0, 0),
+				TextStrokeTransparency = 0.8,
 				TextTruncate = Enum.TextTruncate.AtEnd,
 				TextXAlignment = widget.RightAligned and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left,
-				Size = UDim2.new(1, -28, 1, 0),
+				Size = UDim2.new(1, -36, 1, 0),
 				LayoutOrder = widget.RightAligned and 1 or 2,
 				Parent = row,
 			})
@@ -2460,10 +2477,8 @@ function Window:_listWidget(name, title, position, headerIcon)
 			self._signature = signature
 			rebuild(entries, state.menuOpen)
 		end
-		local count = #entries
-		titleLabel.Text = (self.Dynamic and count > 0) and string.format("%s  %d", title, count) or title
 		-- Dynamic: пустой список прячется, пока меню закрыто
-		frame.Visible = self.Visible and (count > 0 or state.menuOpen or not self.Dynamic)
+		frame.Visible = self.Visible and (#entries > 0 or state.menuOpen or not self.Dynamic)
 	end
 
 	function widget:SetVisible(visible)
