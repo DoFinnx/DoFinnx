@@ -1046,9 +1046,10 @@ function Container:_settings(acc, title, order)
 			return
 		end
 		dots.TextColor3 = Theme.Accent
-		window:_openPopup(panel.frame, dots, "side", function()
+		panel.frame.Size = panel.fullSize
+		window:_openPopup(panel.frame, dots, "attach", function()
 			tween(dots, 0.12, { TextColor3 = Theme.Muted })
-		end)
+		end, true)
 	end)
 	return panel
 end
@@ -1386,15 +1387,19 @@ function Window:_panel(title)
 	local layout = listLayout(0)
 	layout.Parent = holder
 
+	local panel = setmetatable({ window = self, holder = holder, frame = frame, _order = 0 }, Container)
+
+	-- fullSize хранится отдельно: после анимации закрытия frame.Size по высоте равен 0.
 	local function resize()
 		local height = layout.AbsoluteContentSize.Y
 		holder.Size = UDim2.new(1, -28, 0, height)
-		frame.Size = UDim2.fromOffset(PANEL_WIDTH, 36 + height + 10)
+		panel.fullSize = UDim2.fromOffset(PANEL_WIDTH, 36 + height + 10)
+		frame.Size = panel.fullSize
 	end
 	self:_track(layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize))
 	resize()
 
-	return setmetatable({ window = self, holder = holder, frame = frame, _order = 0 }, Container)
+	return panel
 end
 
 function Window:_isOpen(frame)
@@ -1453,6 +1458,19 @@ function Window:_place(frame, anchor, mode, frameSize)
 			x = host.AbsolutePosition.X - frameSize.X - 10
 		end
 		y = anchorPos.Y - 12
+	elseif mode == "attach" then
+		-- под строкой, к которой относится кнопка: anchor -> Controls -> строка
+		local row = anchor.Parent and anchor.Parent.Parent
+		if not (row and row:IsA("GuiObject")) then
+			row = anchor
+		end
+		local rowPos, rowSize = row.AbsolutePosition, row.AbsoluteSize
+		x = rowPos.X + rowSize.X - frameSize.X
+		y = rowPos.Y + rowSize.Y + 4
+		if y + frameSize.Y > maxY then
+			y = rowPos.Y - frameSize.Y - 4
+			flipped = true
+		end
 	else
 		x = anchorPos.X + anchorSize.X - frameSize.X
 		y = anchorPos.Y + anchorSize.Y + 6
@@ -1625,6 +1643,12 @@ function Window:AddTab(opts)
 		Parent = self.content,
 	})
 	tab.page = page
+	-- привязанные панели не должны «висеть в воздухе» при прокрутке страницы
+	self:_track(page:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+		if #self._popups > 0 then
+			self:_closeAll()
+		end
+	end))
 
 	table.insert(self.Tabs, tab)
 	if not self.CurrentTab then
