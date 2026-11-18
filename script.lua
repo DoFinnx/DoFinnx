@@ -1,2503 +1,1532 @@
 --[[
-	NeverloseUI v2 — тёмное «стеклянное» меню для Roblox (Luau)
-	Стиль: сайдбар с категориями/подвкладками, карточки с заголовками, пресеты, поиск,
-	окно профиля, колорпикер с HEX. Иконки рисуются фигурами (без шрифтовых символов).
+	Лоудер: загружает Library.lua и собирает меню по макету.
+	Только интерфейс — у элементов нет игровых функций (Callback пустые).
 
-	Использование:
-		local UI = loadstring(game:HttpGet("...script.lua"))()
-		local ui = UI.new({ Title = "MYMODE", Subtitle = "Roblox", Accent = Color3.fromRGB(72,108,247) })
+	1) Выложите Library.lua куда-нибудь с прямой (raw) ссылкой и подставьте её в LIBRARY_URL.
+	2) В Roblox Studio можно без ссылки: положите Library.lua как ModuleScript "Library"
+	   рядом с этим LocalScript — тогда сработает require.
 ]]
 
-local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-local Lighting = game:GetService("Lighting")
-local HttpService = game:GetService("HttpService")
+local LIBRARY_URL = "https://raw.githubusercontent.com/DoFinnx/DoFinnx/refs/heads/main/NLlib.lua"
 
-local Theme = {
-	-- токены из DESIGN.md (Neverlose-last)
-	Window = Color3.fromHex("0D0F16"), -- shell
-	Sidebar = Color3.fromHex("12151E"),
-	Toolbar = Color3.fromHex("0B0D14"),
-	Card = Color3.fromHex("11131B"),
-	Box = Color3.fromHex("181B25"), -- control
-	Active = Color3.fromHex("272B36"), -- selected
-	Stroke = Color3.fromHex("20232E"), -- border
-	Divider = Color3.fromHex("20232E"),
-	Popup = Color3.fromHex("0D0F16"),
-	Text = Color3.fromHex("D9DBE2"),
-	SubText = Color3.fromHex("9296A2"), -- text-muted
-	Faint = Color3.fromHex("5E6370"), -- text-faint
-	Off = Color3.fromHex("20242F"),
-	OffKnob = Color3.fromHex("84909C"), -- toggle-off
-	AccentBright = Color3.fromHex("66A4FF"),
-	Chip = Color3.fromHex("73D6D2"), -- style-chip
-}
+-- Адрес вашего сервера присутствия (server/presence-server.js) для Synchronization,
+-- например "https://nocturne-sync.onrender.com". Пусто — синхронизация не работает.
+local SYNC_ENDPOINT = "https://nocturne-sync.onrender.com"
 
-local DEFAULT_ACCENT = Color3.fromHex("4E83FF")
+local function loadLibrary()
+	local module = script and script.Parent and script.Parent:FindFirstChild("Library")
+	if module and module:IsA("ModuleScript") then
+		return require(module)
+	end
+	assert(loadstring, "loadstring недоступен: используйте вариант с ModuleScript")
 
-local FONT = Enum.Font.GothamMedium
-local FONT_BOLD = Enum.Font.GothamBold
-local MOUSE1 = Enum.UserInputType.MouseButton1
-local TOUCH = Enum.UserInputType.Touch
-local MOVE = Enum.UserInputType.MouseMovement
-local WHITE = Color3.new(1, 1, 1)
+	-- Скачиваем отдельно, чтобы при ошибке было видно, что именно пошло не так.
+	local ok, source = pcall(function()
+		return game:HttpGet(LIBRARY_URL)
+	end)
+	if not ok or type(source) ~= "string" then
+		error("[Nocturne UI] не удалось скачать библиотеку: " .. tostring(source), 0)
+	end
+	if source:sub(1, 3) == "\239\187\191" then
+		source = source:sub(4) -- убираем BOM, если файл сохранён с ним
+	end
+	-- Защита от двойной вставки: всё после первого «return Library» отбрасываем.
+	local _, finish = source:find("\nreturn Library", 1, true)
+	if finish and #source > finish + 2 then
+		warn("[Nocturne UI] после 'return Library' в файле есть лишний текст (" .. (#source - finish) .. " байт) — он пропущен. Замените файл на GitHub целиком.")
+		source = source:sub(1, finish)
+	end
 
----------------------------------------------------------------------
--- helpers
----------------------------------------------------------------------
-local function create(class, props, children)
-	local inst = Instance.new(class)
-	local parent
-	for k, v in pairs(props or {}) do
-		if k == "Parent" then
-			parent = v
-		else
-			inst[k] = v
+	local chunk, compileError = loadstring(source, "=NocturneLibrary")
+	if not chunk then
+		error(
+			"[Nocturne UI] Library.lua не компилируется: "
+				.. tostring(compileError)
+				.. "\nРазмер ответа: "
+				.. #source
+				.. " байт. Начало: "
+				.. source:sub(1, 80),
+			0
+		)
+	end
+
+	local runOk, library = pcall(chunk)
+	if not runOk then
+		error("[Nocturne UI] ошибка при запуске библиотеки: " .. tostring(library), 0)
+	end
+	if type(library) ~= "table" then
+		error("[Nocturne UI] библиотека вернула " .. typeof(library) .. " вместо таблицы", 0)
+	end
+	return library
+end
+
+local Library = loadLibrary()
+print("[Nocturne UI] version " .. tostring(Library.Version))
+
+local WHITE = Color3.fromRGB(244, 245, 255)
+
+-- Перевод подписей меню на русский (переключается в меню профиля -> Language).
+-- Значения в выпадающих списках остаются как есть.
+local RU = Library.Translations.Russian
+for key, value in pairs({
+	-- категории и вкладки
+	Aimbot = "Аимбот",
+	Common = "Общее",
+	Rage = "Рейдж",
+	Legit = "Легит",
+	Visuals = "Визуалы",
+	Inventory = "Инвентарь",
+	Miscellaneous = "Разное",
+	-- секции и панели
+	Main = "Основное",
+	Selection = "Выбор цели",
+	Other = "Другое",
+	["Anti-Aim"] = "Анти-аим",
+	Target = "Цель",
+	["Recoil Control"] = "Контроль отдачи",
+	Triggerbot = "Триггербот",
+	Players = "Игроки",
+	World = "Мир",
+	Effects = "Эффекты",
+	View = "Вид",
+	Weapon = "Оружие",
+	Charm = "Брелок",
+	Agents = "Агенты",
+	Actions = "Действия",
+	Windows = "Окна",
+	Movement = "Движение",
+	Menu = "Меню",
+	Config = "Конфиг",
+	["Rage Settings"] = "Настройки рейджа",
+	["Scope Options"] = "Прицел",
+	["Aim Assist"] = "Помощь в прицеливании",
+	Options = "Параметры",
+	Gloves = "Перчатки",
+	-- элементы
+	["Silent Aim"] = "Тихий аим",
+	["Automatic Fire"] = "Автострельба",
+	["Aim Through Walls"] = "Сквозь стены",
+	["Field of View"] = "Поле зрения",
+	Hitboxes = "Хитбоксы",
+	Multipoint = "Мультиточки",
+	["Hit Chance"] = "Шанс попадания",
+	["Min Damage"] = "Мин. урон",
+	["Quick Stop"] = "Быстрая остановка",
+	["Quick Scope"] = "Быстрый прицел",
+	History = "История",
+	["Delay Shot"] = "Задержка выстрела",
+	["Remove Recoil"] = "Без отдачи",
+	["Remove Spread"] = "Без разброса",
+	["Duck Peek Assist"] = "Duck Peek",
+	["Quick Peek Assist"] = "Quick Peek",
+	["Double Tap"] = "Double Tap",
+	Pitch = "Наклон",
+	Yaw = "Поворот",
+	Freestanding = "Фристендинг",
+	["Mouse Override"] = "Управление мышью",
+	Mode = "Режим",
+	Base = "База",
+	Offset = "Смещение",
+	Hotkey = "Клавиша",
+	Color = "Цвет",
+	Smoothing = "Сглаживание",
+	["Visualize Target"] = "Показывать цель",
+	["Visualize FOV"] = "Показывать FOV",
+	["Visible Only"] = "Только видимые",
+	["Ignore Smoke"] = "Игнорировать дым",
+	["Ignore Flash"] = "Игнорировать вспышку",
+	["Reaction Time"] = "Время реакции",
+	Priority = "Приоритет",
+	["Target Switch Delay"] = "Задержка смены цели",
+	["Switch Delay"] = "Задержка смены",
+	Standalone = "Отдельно",
+	["Start Bullet"] = "С пули",
+	Vertical = "Вертикаль",
+	Horizontal = "Горизонталь",
+	["Scoped Only"] = "Только в прицеле",
+	Delay = "Задержка",
+	["Burst Fire"] = "Очередь",
+	Targets = "Цели",
+	["ESP Items"] = "Элементы ESP",
+	Flags = "Флаги",
+	Glow = "Свечение",
+	Chams = "Чамсы",
+	["Max Distance"] = "Макс. дистанция",
+	Bomb = "Бомба",
+	Hostages = "Заложники",
+	Grenades = "Гранаты",
+	["Dropped Weapons"] = "Оружие на земле",
+	Scoreboard = "Таблица счёта",
+	["Bullet Tracer"] = "Трассеры",
+	["Hit Marker"] = "Хитмаркер",
+	["Grenade Trajectory"] = "Траектория гранат",
+	Crosshairs = "Прицелы",
+	["Perspective Options"] = "Перспектива",
+	["Viewmodel Options"] = "Модель рук",
+	["View Options"] = "Обзор",
+	Removals = "Удаления",
+	Duration = "Длительность",
+	Enemies = "Враги",
+	Teammates = "Союзники",
+	["Local Player"] = "Вы",
+	["Custom Skin"] = "Свой скин",
+	Skin = "Скин",
+	["Wear Value"] = "Износ",
+	["StatTrak Value"] = "Счётчик StatTrak",
+	Tint = "Оттенок",
+	Model = "Модель",
+	Variant = "Вариант",
+	Template = "Шаблон",
+	Terrorist = "Террорист",
+	["Counter-Terrorist"] = "Спецназ",
+	["Override Gloves"] = "Свои перчатки",
+	["Override Music Kit"] = "Свой набор музыки",
+	Copy = "Копировать",
+	Paste = "Вставить",
+	["Reset Position"] = "Сбросить позицию",
+	Delete = "Удалить",
+	Watermark = "Водяной знак",
+	Items = "Пункты",
+	["Additional Colors"] = "Доп. цвет",
+	["Display Avatar"] = "Показывать аватар",
+	["Right-Aligned"] = "По правому краю",
+	["Dynamic Header"] = "Динамический заголовок",
+	["Show Inactive Binds"] = "Показывать неактивные",
+	["Auto Jump"] = "Автопрыжок",
+	["Jump Bug"] = "Jump Bug",
+	Slowdown = "Замедление",
+	["Auto Strafe"] = "Автострейф",
+	["Speed Limit"] = "Лимит скорости",
+	["Menu Key"] = "Клавиша меню",
+	["Show Notifications"] = "Уведомления",
+	["Test Notification"] = "Тестовое уведомление",
+	["Unload Menu"] = "Выгрузить меню",
+	Profile = "Профиль",
+	Save = "Сохранить",
+	Load = "Загрузить",
+	Reset = "Сбросить",
+}) do
+	RU[key] = value
+end
+
+local Window = Library:CreateWindow({
+	Title = "Nocturne",
+	Subtitle = "Universal",
+	Logo = "NC",
+	Footer = "Menu preview",
+	Status = "Free preview", -- строка под именем в меню профиля
+	SyncEndpoint = SYNC_ENDPOINT, -- Synchronization: видеть других пользователей скрипта
+	-- OnRenew = function() end, OnChat = function() end, OnESPScale = function(scale) end
+	ToggleKey = Enum.KeyCode.RightShift,
+	Size = UDim2.fromOffset(780, 560),
+})
+
+----------------------------------------------------------------------
+-- AIMBOT
+----------------------------------------------------------------------
+Window:AddCategory("Aimbot")
+
+------------------------------- Rage ---------------------------------
+local Rage = Window:AddTab({ Name = "Rage", Icon = "crosshair" })
+
+local Main = Rage:AddSection({ Name = "Main", Side = "Left" })
+local enabled = Main:AddToggle({ Name = "Enabled", Default = true, Flag = "rage_enabled" })
+local rageSettings = enabled:AddSettings("Rage Settings")
+rageSettings:AddToggle({ Name = "Visualize Target", Default = true })
+rageSettings:AddSlider({ Name = "Smoothing", Min = 0, Max = 100, Default = 20, Suffix = "%" })
+
+local silent = Main:AddToggle({ Name = "Silent Aim", Default = true })
+local silentSettings = silent:AddSettings("Silent Aim")
+silentSettings:AddDropdown({ Name = "Mode", Options = { "Default", "Strict" }, Default = "Default", Width = 110 })
+
+Main:AddToggle({ Name = "Automatic Fire", Default = true })
+Main:AddToggle({ Name = "Aim Through Walls", Default = true })
+Main:AddSlider({ Name = "Field of View", Min = 0, Max = 180, Default = 180, Decimals = 1, Suffix = "°" })
+
+local Selection = Rage:AddSection({ Name = "Selection", Side = "Left" })
+Selection:AddDropdown({ Name = "Target", Options = { "Highest Damage", "Closest to Crosshair", "Lowest Health" } })
+Selection:AddDropdown({
+	Name = "Hitboxes",
+	Multi = true,
+	Options = { "Head", "Chest", "Stomach", "Arms", "Legs" },
+	Default = { "Head", "Chest", "Stomach" },
+})
+Selection:AddDropdown({
+	Name = "Multipoint",
+	Multi = true,
+	Options = { "Head", "Chest", "Stomach", "Arms", "Legs" },
+	Default = { "Head", "Chest" },
+})
+Selection:AddSlider({ Name = "Hit Chance", Min = 0, Max = 100, Default = 50, Suffix = "%" })
+Selection:AddSlider({ Name = "Min Damage", Min = 0, Max = 100, Default = 15 })
+Selection:AddToggle({ Name = "Hit Chance Override", Default = false }):AddKeybind({ Default = Enum.KeyCode.Z })
+Selection:AddToggle({ Name = "Min Damage Override", Default = false }):AddKeybind({ Default = Enum.KeyCode.B })
+Selection:AddToggle({ Name = "Quick Stop", Default = true })
+
+local quickScope = Selection:AddToggle({ Name = "Quick Scope", Default = true })
+local scope = quickScope:AddSettings("Scope Options")
+scope:AddToggle({ Name = "Override FOV", Default = true })
+scope:AddSlider({ Name = "Scale (x1)", Min = 0, Max = 100, Default = 40, Suffix = "%" })
+scope:AddSlider({ Name = "Scale (x2)", Min = 0, Max = 100, Default = 25, Suffix = "%" })
+scope:AddDivider()
+scope:AddToggle({ Name = "Instant Scope", Default = true })
+scope:AddToggle({ Name = "Show Viewmodel", Default = false })
+
+local Other = Rage:AddSection({ Name = "Other", Side = "Right" })
+Other:AddDropdown({ Name = "History", Options = { "Off", "Low", "Medium", "High" }, Default = "High", Width = 120 })
+Other:AddToggle({ Name = "Delay Shot", Default = true })
+Other:AddToggle({ Name = "Remove Recoil", Default = true })
+Other:AddToggle({ Name = "Remove Spread", Default = true })
+Other:AddToggle({ Name = "Duck Peek Assist", Default = false }):AddKeybind({ Default = Enum.KeyCode.H, Mode = "Hold" })
+local peek = Other:AddToggle({ Name = "Quick Peek Assist", Default = false })
+peek:AddKeybind({ Default = Enum.KeyCode.X })
+Other:AddToggle({ Name = "Double Tap", Default = true }):AddKeybind({ Default = Enum.KeyCode.N })
+
+local AntiAim = Rage:AddSection({ Name = "Anti-Aim", Side = "Right" })
+AntiAim:AddToggle({ Name = "Enabled", Default = true })
+
+local pitch = AntiAim:AddSubmenu({ Name = "Pitch", Value = "Down" })
+pitch:AddDropdown({
+	Name = "Mode",
+	Options = { "Disabled", "Down", "Up", "Zero" },
+	Default = "Down",
+	Width = 110,
+	Callback = function(value)
+		pitch:SetValue(value)
+	end,
+})
+
+local yaw = AntiAim:AddSubmenu({ Name = "Yaw", Value = "Backward" })
+yaw:AddDropdown({
+	Name = "Base",
+	Options = { "Backward", "Forward", "Left", "Right" },
+	Default = "Backward",
+	Width = 110,
+	Callback = function(value)
+		yaw:SetValue(value)
+	end,
+})
+yaw:AddSlider({ Name = "Offset", Min = -180, Max = 180, Default = 0, Suffix = "°" })
+
+local freestanding = AntiAim:AddSubmenu({ Name = "Freestanding" })
+freestanding:AddToggle({ Name = "Freestanding", Default = true }):AddKeybind({ Default = Enum.KeyCode.T })
+freestanding:AddSlider({ Name = "Offset", Min = 0, Max = 100, Default = 43 })
+freestanding:AddToggle({ Name = "Override Pitch", Default = true })
+freestanding:AddSlider({ Name = "Offset", Min = 0, Max = 100, Default = 70 })
+
+local mouseOverride = AntiAim:AddSubmenu({ Name = "Mouse Override" })
+mouseOverride:AddKeybind({ Name = "Hotkey", Default = Enum.KeyCode.W })
+mouseOverride:AddDropdown({ Name = "Base", Options = { "Local View", "At Targets" }, Default = "Local View", Width = 110 })
+mouseOverride:AddColorpicker({ Name = "Color", Default = Color3.fromRGB(185, 78, 155) })
+mouseOverride:AddDropdown({ Name = "Style", Options = { "Fade-out", "Static", "Pulse" }, Default = "Fade-out", Width = 110 })
+
+------------------------------- Legit --------------------------------
+local Legit = Window:AddTab({ Name = "Legit", Icon = "target" })
+
+local LegitMain = Legit:AddSection({ Name = "Main", Side = "Left" })
+local legitEnabled = LegitMain:AddToggle({ Name = "Enabled", Default = true })
+legitEnabled:AddKeybind({ Default = Enum.KeyCode.LeftAlt })
+local legitSettings = legitEnabled:AddSettings("Aim Assist")
+legitSettings:AddToggle({ Name = "Visualize FOV", Default = true }):AddColorpicker({ Default = WHITE })
+legitSettings:AddToggle({ Name = "Visible Only", Default = true })
+legitSettings:AddToggle({ Name = "Ignore Smoke", Default = false })
+legitSettings:AddToggle({ Name = "Ignore Flash", Default = false })
+LegitMain:AddSlider({ Name = "Field of View", Min = 0, Max = 30, Default = 4, Decimals = 1, Suffix = "°" })
+LegitMain:AddSlider({ Name = "Smoothing", Min = 0, Max = 100, Default = 35, Suffix = "%" })
+LegitMain:AddSlider({ Name = "Reaction Time", Min = 0, Max = 500, Default = 80, Suffix = " ms" })
+
+local LegitTarget = Legit:AddSection({ Name = "Target", Side = "Left" })
+LegitTarget:AddDropdown({ Name = "Priority", Options = { "Closest to Crosshair", "Lowest Health", "Distance" } })
+LegitTarget:AddDropdown({
+	Name = "Hitboxes",
+	Multi = true,
+	Options = { "Head", "Neck", "Chest", "Stomach" },
+	Default = { "Head", "Chest" },
+})
+LegitTarget:AddToggle({ Name = "Target Switch Delay", Default = false })
+LegitTarget:AddSlider({ Name = "Switch Delay", Min = 0, Max = 1000, Default = 250, Suffix = " ms" })
+
+local Recoil = Legit:AddSection({ Name = "Recoil Control", Side = "Right" })
+local rcs = Recoil:AddToggle({ Name = "Enabled", Default = true })
+local rcsSettings = rcs:AddSettings("Recoil Control")
+rcsSettings:AddToggle({ Name = "Standalone", Default = false })
+rcsSettings:AddSlider({ Name = "Start Bullet", Min = 1, Max = 10, Default = 2 })
+Recoil:AddSlider({ Name = "Vertical", Min = 0, Max = 100, Default = 80, Suffix = "%" })
+Recoil:AddSlider({ Name = "Horizontal", Min = 0, Max = 100, Default = 65, Suffix = "%" })
+
+local Trigger = Legit:AddSection({ Name = "Triggerbot", Side = "Right" })
+local trigger = Trigger:AddToggle({ Name = "Enabled", Default = false })
+trigger:AddKeybind({ Default = Enum.KeyCode.Q })
+local triggerSettings = trigger:AddSettings("Triggerbot")
+triggerSettings:AddDropdown({
+	Name = "Hitboxes",
+	Multi = true,
+	Options = { "Head", "Chest", "Stomach", "Arms", "Legs" },
+	Default = { "Head" },
+	Width = 120,
+})
+triggerSettings:AddToggle({ Name = "Scoped Only", Default = true })
+Trigger:AddSlider({ Name = "Hit Chance", Min = 0, Max = 100, Default = 70, Suffix = "%" })
+Trigger:AddSlider({ Name = "Delay", Min = 0, Max = 500, Default = 60, Suffix = " ms" })
+Trigger:AddToggle({ Name = "Burst Fire", Default = false })
+
+----------------------------------------------------------------------
+-- COMMON
+----------------------------------------------------------------------
+Window:AddCategory("Common")
+
+------------------------------ Visuals -------------------------------
+local Visuals = Window:AddTab({ Name = "Visuals", Icon = "eye" })
+
+local PlayersSection = Visuals:AddSection({ Name = "Players", Side = "Left" })
+PlayersSection:AddToggle({ Name = "Enabled", Default = true }):AddColorpicker({ Default = Color3.fromRGB(241, 108, 157) })
+PlayersSection:AddDropdown({
+	Name = "Targets",
+	Multi = true,
+	Options = { "Enemies", "Teammates", "Local Player" },
+	Default = { "Enemies" },
+})
+local espItems = PlayersSection:AddSubmenu({ Name = "ESP Items" })
+espItems:AddGroup():AddChips({
+	Name = "Main",
+	Options = { "Bounding Box", "Name", "Distance", "Health Bar", "Ammo Bar", "Skeleton" },
+	Default = { "Bounding Box", "Name", "Health Bar" },
+})
+espItems:AddGroup():AddChips({
+	Name = "Flags",
+	Options = { "Unarmored", "Defuser", "Blind", "Scoped", "Reload", "Immunity", "Slowed", "Vulnerable", "Money", "Delay" },
+	Default = { "Scoped", "Reload" },
+})
+espItems:AddGroup():AddChips({ Name = "Weapon", Options = { "Text", "Icon", "Readiness Bar" }, Default = { "Icon" } })
+
+local glow = PlayersSection:AddToggle({ Name = "Glow", Default = true })
+glow:AddColorpicker({ Default = Color3.fromRGB(100, 133, 247) })
+glow:AddSettings("Glow"):AddGroup():AddDropdown({ Name = "Style", Options = { "Default", "Pulse", "Outline" }, Default = "Default" })
+PlayersSection:AddSlider({ Name = "Max Distance", Min = 0, Max = 1000, Default = 500, Suffix = " m" })
+
+local Models = Visuals:AddSection({ Name = "Models", Side = "Right" })
+local enemyChams = Models:AddToggle({ Name = "Enemy Chams", Default = true })
+enemyChams:AddColorpicker({ Default = Color3.fromRGB(241, 108, 157) })
+local enemyChamsGroup = enemyChams:AddSettings("Enemy Chams"):AddGroup()
+enemyChamsGroup:AddToggle({ Name = "Visible Only", Default = false })
+enemyChamsGroup:AddLabel("Hidden Color"):AddColorpicker({ Default = Color3.fromRGB(100, 133, 247) })
+Models:AddToggle({ Name = "Team Chams", Default = false }):AddColorpicker({ Default = Color3.fromRGB(88, 196, 128) })
+Models:AddToggle({ Name = "Local Chams", Default = false }):AddColorpicker({ Default = Color3.fromRGB(245, 246, 255) })
+Models:AddToggle({ Name = "Weapon Chams", Default = false }):AddColorpicker({ Default = Color3.fromRGB(240, 150, 70) })
+Models:AddToggle({ Name = "Hand Chams", Default = false }):AddColorpicker({ Default = Color3.fromRGB(150, 110, 245) })
+Models:AddDropdown({ Name = "Material", Options = { "Flat", "Glow", "Metallic", "Glass" }, Default = "Flat", Width = 120 })
+Models:AddSlider({ Name = "Transparency", Min = 0, Max = 100, Default = 0, Suffix = "%" })
+
+----------------------------- Inventory ------------------------------
+-- Своя модель персонажа: внешний вид другого игрока Roblox ставится на персонажа ЛОКАЛЬНО.
+-- С включённой Synchronization модель видят и другие пользователи скрипта (у себя, тоже локально),
+-- а вы видите их модели. Обычные игроки видят настоящие аватары.
+local Inventory = Window:AddTab({ Name = "Inventory", Icon = "shirt" })
+
+do
+	local PlayersService = game:GetService("Players")
+	local localPlayer = PlayersService.LocalPlayer
+
+	local ALL_PARTS = { "Accessories", "Clothing", "Body Colors", "Face" }
+	local CLOTHING = { Shirt = true, Pants = true, ShirtGraphic = true }
+
+	local function partsSet(list)
+		local set = {}
+		for _, part in ipairs(list or ALL_PARTS) do
+			set[part] = true
+		end
+		return set
+	end
+
+	local function partsList(set)
+		local list = {}
+		for _, part in ipairs(ALL_PARTS) do
+			if set[part] then
+				table.insert(list, part)
+			end
+		end
+		return list
+	end
+
+	local state = {
+		parts = partsSet(ALL_PARTS),
+		keepAfterRespawn = true,
+		share = true, -- показывать свою модель другим пользователям скрипта
+		showOthers = true, -- надевать модели других пользователей на их персонажей
+		appearance = nil, -- своя загруженная модель
+		targetId = nil,
+		targetName = nil,
+		snapshot = nil, -- исходный вид своего персонажа, для Reset
+		busy = false,
+	}
+	local appearanceCache = {} -- [UserId аватара] = Model (false — загружается)
+	local remote = {} -- [UserId игрока] = { character, key, snapshot }
+	local firstSeen = setmetatable({}, { __mode = "k" }) -- когда впервые увидели персонажа
+
+	local function notify(title, text)
+		Window:Notify({ Title = title, Text = text, Duration = 4 })
+	end
+
+	local function trim(text)
+		return (string.gsub(text or "", "^%s*(.-)%s*$", "%1"))
+	end
+
+	local function getFace(character)
+		local head = character:FindFirstChild("Head")
+		return head and (head:FindFirstChild("face") or head:FindFirstChildWhichIsA("Decal"))
+	end
+
+	-- Снимок исходного вида персонажа, чтобы потом вернуть как было.
+	local function takeSnapshot(character)
+		local snapshot = { character = character, items = {}, colors = {} }
+		for _, child in ipairs(character:GetChildren()) do
+			if child:IsA("Accoutrement") or CLOTHING[child.ClassName] or child:IsA("BodyColors") then
+				local archivable = child.Archivable
+				child.Archivable = true
+				local ok, copy = pcall(function()
+					return child:Clone()
+				end)
+				child.Archivable = archivable
+				if ok and copy then
+					table.insert(snapshot.items, copy)
+				end
+			elseif child:IsA("BasePart") then
+				snapshot.colors[child] = child.Color
+			end
+		end
+		local face = getFace(character)
+		snapshot.faceTexture = face and face.Texture
+		return snapshot
+	end
+
+	local function removeKinds(character, parts)
+		for _, child in ipairs(character:GetChildren()) do
+			if (parts.Accessories and child:IsA("Accoutrement"))
+				or (parts.Clothing and CLOTHING[child.ClassName])
+				or (parts["Body Colors"] and child:IsA("BodyColors"))
+			then
+				child:Destroy()
+			end
 		end
 	end
-	for _, c in ipairs(children or {}) do
-		c.Parent = inst
-	end
-	inst.Parent = parent
-	return inst
-end
 
-local function tween(obj, t, props, style, dir)
-	local tw = TweenService:Create(
-		obj,
-		TweenInfo.new(t, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out),
-		props
-	)
-	tw:Play()
-	return tw
-end
-
-local function apply(obj, props, animate, t)
-	if animate == false then
-		for k, v in pairs(props) do
-			obj[k] = v
+	local function stripWelds(accessory)
+		local handle = accessory:FindFirstChild("Handle")
+		if handle then
+			for _, item in ipairs(handle:GetChildren()) do
+				if item:IsA("JointInstance") or item:IsA("WeldConstraint") then
+					item:Destroy()
+				end
+			end
 		end
-	else
-		tween(obj, t or 0.15, props)
 	end
-end
 
-local function corner(parent, r)
-	return create("UICorner", { CornerRadius = UDim.new(0, r), Parent = parent })
-end
+	-- Ищем точку крепления только в частях тела (не внутри других аксессуаров).
+	local function findBodyAttachment(character, attachmentName)
+		for _, part in ipairs(character:GetChildren()) do
+			if part:IsA("BasePart") then
+				local attachment = part:FindFirstChild(attachmentName)
+				if attachment and attachment:IsA("Attachment") then
+					return attachment
+				end
+			end
+		end
+		return nil
+	end
 
-local function stroke(parent, color, thickness, transparency)
-	return create("UIStroke", {
-		Color = color or Theme.Stroke,
-		Thickness = thickness or 1,
-		Transparency = transparency or 0,
-		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-		Parent = parent,
-	})
-end
-
-local function label(parent, str, size, color, font, xalign)
-	return create("TextLabel", {
-		BackgroundTransparency = 1,
-		Text = str,
-		TextSize = size or 13,
-		TextColor3 = color or Theme.Text,
-		Font = font or FONT,
-		TextXAlignment = xalign or Enum.TextXAlignment.Left,
-		Parent = parent,
-	})
-end
-
-local function isPointer(input)
-	return input.UserInputType == MOUSE1 or input.UserInputType == TOUCH
-end
-
-local function dragger(frame, callback)
-	frame.InputBegan:Connect(function(input)
-		if not isPointer(input) then
+	-- Humanoid:AddAccessory на клиенте не создаёт сварку, поэтому привариваем сами.
+	local function addAccessory(character, accessory)
+		stripWelds(accessory)
+		local handle = accessory:FindFirstChild("Handle")
+		if not (handle and handle:IsA("BasePart")) then
+			accessory.Parent = character
 			return
 		end
-		callback(input.Position)
-		local move = UserInputService.InputChanged:Connect(function(i)
-			if i.UserInputType == MOVE or i.UserInputType == TOUCH then
-				callback(i.Position)
-			end
+		handle.Anchored = false
+		handle.CanCollide = false
+		pcall(function()
+			handle.Massless = true
+			handle.CanQuery = false
+			handle.CanTouch = false
 		end)
-		local finish
-		finish = UserInputService.InputEnded:Connect(function(i)
-			if i.UserInputType == input.UserInputType then
-				move:Disconnect()
-				finish:Disconnect()
-			end
-		end)
-	end)
-end
 
-local function decimalsOf(step)
-	local frac = tostring(step):match("%.(%d+)")
-	return frac and #frac or 0
-end
+		local weld = Instance.new("Weld")
+		weld.Name = "AccessoryWeld"
+		weld.Part0 = handle
 
-local function hexOf(c, a)
-	return string.format(
-		"#%02X%02X%02X%02X",
-		math.floor(c.R * 255 + 0.5),
-		math.floor(c.G * 255 + 0.5),
-		math.floor(c.B * 255 + 0.5),
-		math.floor((a or 1) * 255 + 0.5)
-	)
-end
-
----------------------------------------------------------------------
--- иконки (рисуются фигурами, цвет меняется через tint)
----------------------------------------------------------------------
-local function part(parent, x, y, w, h, o)
-	o = o or {}
-	local f = create("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromOffset(x, y),
-		Size = UDim2.fromOffset(w, h),
-		Rotation = o.rot or 0,
-		BackgroundColor3 = WHITE,
-		BackgroundTransparency = o.ring and 1 or 0,
-		BorderSizePixel = 0,
-		Parent = parent,
-	})
-	if o.round then
-		corner(f, 100)
-	elseif o.radius then
-		corner(f, o.radius)
-	elseif not o.ring and (w <= 2 or h <= 2) then
-		corner(f, 1)
-	end
-	if o.ring then
-		stroke(f, WHITE, o.thick or 1.5)
-	end
-	return f
-end
-
-local Icons = {}
-Icons.dot = function(p)
-	part(p, 9, 9, 5, 5, { round = true })
-end
-Icons.crosshair = function(p)
-	part(p, 9, 9, 11, 11, { ring = true, round = true })
-	part(p, 9, 2.5, 1.5, 4)
-	part(p, 9, 15.5, 1.5, 4)
-	part(p, 2.5, 9, 4, 1.5)
-	part(p, 15.5, 9, 4, 1.5)
-	part(p, 9, 9, 2, 2, { round = true })
-end
-Icons.mouse = function(p)
-	part(p, 9, 9, 10, 15, { ring = true, radius = 5 })
-	part(p, 9, 6, 1.5, 4)
-end
-Icons.image = function(p)
-	part(p, 9, 9, 15, 12, { ring = true, radius = 3 })
-	part(p, 6.5, 7, 3, 3, { round = true })
-	part(p, 11.5, 11.5, 6, 1.5, { rot = -35 })
-end
-Icons.layers = function(p)
-	part(p, 9, 4.5, 12, 3, { radius = 1.5 })
-	part(p, 9, 9, 15, 3, { radius = 1.5 })
-	part(p, 9, 13.5, 12, 3, { radius = 1.5 })
-end
-Icons.sliders = function(p)
-	part(p, 9, 4, 14, 1.5)
-	part(p, 9, 9, 14, 1.5)
-	part(p, 9, 14, 14, 1.5)
-	part(p, 6, 4, 4, 4, { round = true })
-	part(p, 12, 9, 4, 4, { round = true })
-	part(p, 7, 14, 4, 4, { round = true })
-end
-Icons.globe = function(p)
-	part(p, 9, 9, 14, 14, { ring = true, round = true })
-	part(p, 9, 9, 1.5, 14)
-	part(p, 9, 9, 14, 1.5)
-	part(p, 9, 9, 6, 14, { ring = true, round = true })
-end
-Icons.user = function(p)
-	part(p, 9, 5.5, 6, 6, { round = true })
-	part(p, 9, 13.5, 12, 6, { radius = 3 })
-end
-Icons.gear = function(p)
-	part(p, 9, 9, 12, 12, { ring = true, round = true, thick = 2 })
-	part(p, 9, 9, 4, 4, { round = true })
-end
-Icons.search = function(p)
-	part(p, 8, 8, 10, 10, { ring = true, round = true })
-	part(p, 14.5, 14.5, 6, 1.8, { rot = 45 })
-end
-Icons.save = function(p)
-	part(p, 9, 9, 13, 13, { ring = true, radius = 3 })
-	part(p, 9, 5.5, 7, 3.5)
-	part(p, 9, 13, 6, 4, { radius = 1 })
-end
-Icons.plus = function(p)
-	part(p, 9, 9, 12, 1.8)
-	part(p, 9, 9, 1.8, 12)
-end
-Icons.trash = function(p)
-	part(p, 9, 5, 13, 1.8)
-	part(p, 9, 3.5, 4, 2)
-	part(p, 9, 11.5, 10, 10, { ring = true, radius = 2 })
-end
-Icons.upload = function(p)
-	part(p, 9, 10, 1.8, 10)
-	part(p, 6.5, 5.5, 6.5, 1.8, { rot = -45 })
-	part(p, 11.5, 5.5, 6.5, 1.8, { rot = 45 })
-	part(p, 9, 15.5, 12, 1.8)
-end
-Icons.cloud = function(p)
-	part(p, 6, 11, 8, 8, { round = true })
-	part(p, 11, 8.5, 9, 9, { round = true })
-	part(p, 10, 12, 12, 6, { radius = 3 })
-end
-Icons.dots = function(p)
-	part(p, 4.5, 9, 3, 3, { round = true })
-	part(p, 9, 9, 3, 3, { round = true })
-	part(p, 13.5, 9, 3, 3, { round = true })
-end
-Icons.check = function(p)
-	part(p, 6, 10.5, 5, 1.8, { rot = 45 })
-	part(p, 11, 9, 9, 1.8, { rot = -50 })
-end
-Icons.chevdown = function(p)
-	part(p, 6.5, 9, 7, 1.8, { rot = 45 })
-	part(p, 11.5, 9, 7, 1.8, { rot = -45 })
-end
-Icons.chevright = function(p)
-	part(p, 9, 6.5, 7, 1.8, { rot = 45 })
-	part(p, 9, 11.5, 7, 1.8, { rot = -45 })
-end
-
-local function tint(container, c)
-	if container:IsA("ImageLabel") then
-		container.ImageColor3 = c
-		return
-	end
-	for _, d in ipairs(container:GetDescendants()) do
-		if d:IsA("UIStroke") then
-			d.Color = c
-		elseif d:IsA("Frame") and d.BackgroundTransparency == 0 then
-			d.BackgroundColor3 = c
-		end
-	end
-end
-
-local function icon(parent, name, color)
-	if type(name) == "string" and name:sub(1, 6) == "rbxass" then
-		return create("ImageLabel", {
-			BackgroundTransparency = 1,
-			Image = name,
-			ImageColor3 = color or Theme.SubText,
-			Size = UDim2.fromOffset(18, 18),
-			Parent = parent,
-		})
-	end
-	local box = create("Frame", {
-		BackgroundTransparency = 1,
-		Size = UDim2.fromOffset(18, 18),
-		Parent = parent,
-	})
-	;(Icons[name] or Icons.dot)(box)
-	tint(box, color or Theme.SubText)
-	return box
-end
-
-local function placeIcon(ic, anchorX, posX, offX)
-	ic.AnchorPoint = Vector2.new(anchorX, 0.5)
-	ic.Position = UDim2.new(posX, offX, 0.5, 0)
-end
-
----------------------------------------------------------------------
--- классы
----------------------------------------------------------------------
-local Library = {}
-Library.__index = Library
-
-local Tab = {}
-Tab.__index = Tab
-
-local Group = {}
-Group.__index = Group
-
----------------------------------------------------------------------
--- окно
----------------------------------------------------------------------
-function Library.new(opts)
-	opts = opts or {}
-	local self = setmetatable({}, Library)
-
-	self.Accent = opts.Accent or DEFAULT_ACCENT
-	self._opts = opts
-	self.Flags = {}
-	self.ToggleKey = opts.ToggleKey or Enum.KeyCode.Insert
-	self.Visible = false
-	self.Presets = {}
-	self.PresetName = nil
-	self._ready = false
-	self._allTabs = {}
-	self._accentFns = {}
-	self._conns = {}
-	self._ctrls = {}
-	self._shadows = {}
-	self._order = 0
-	self._cfgFile = opts.ConfigFile or "NeverloseUI_presets.json"
-
-	local title = opts.Title or "NEVERLOSE"
-	local size = opts.Size or Vector2.new(748, 576)
-	self.Size = size
-
-	-- подгоняем масштаб под экран, чтобы окно не вылезало
-	local fit = 1
-	local cam = workspace.CurrentCamera
-	if cam then
-		local vp = cam.ViewportSize
-		fit = math.min(vp.X / (size.X + 30), vp.Y / (size.Y + 60))
-	end
-	self.Scale = math.max(0.5, math.min(opts.Scale or 1, fit))
-
-	local parent = opts.Parent or Players.LocalPlayer:WaitForChild("PlayerGui")
-	local old = parent:FindFirstChild("NeverloseUI")
-	if old then
-		old:Destroy()
-	end
-	local oldBlur = Lighting:FindFirstChild("NeverloseBlur")
-	if oldBlur then
-		oldBlur:Destroy()
-	end
-
-	self.Gui = create("ScreenGui", {
-		Name = "NeverloseUI",
-		ResetOnSpawn = false,
-		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-		DisplayOrder = 100,
-		Parent = parent,
-	})
-	self.Root = create("Frame", {
-		BackgroundTransparency = 1,
-		Size = UDim2.fromScale(1 / self.Scale, 1 / self.Scale),
-		Parent = self.Gui,
-	})
-	self.UIScale = create("UIScale", { Scale = self.Scale, Parent = self.Root })
-
-	-- Holder: тень + окно (двигаем вместе)
-	self.Holder = create("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(size.X, size.Y),
-		BackgroundTransparency = 1,
-		Parent = self.Root,
-	})
-	self.Pop = create("UIScale", { Scale = 0.92, Parent = self.Holder })
-	for i = 1, 5 do
-		local sh = create("Frame", {
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.new(0.5, 0, 0.5, 8),
-			Size = UDim2.new(1, i * 8, 1, i * 8),
-			BackgroundColor3 = Color3.new(0, 0, 0),
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			ZIndex = 1,
-			Parent = self.Holder,
-		})
-		corner(sh, 16 + i * 5)
-		table.insert(self._shadows, { frame = sh, base = 0.93 })
-	end
-
-	self.Main = create("CanvasGroup", {
-		Name = "Main",
-		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = Theme.Window,
-		BackgroundTransparency = 0.03,
-		BorderSizePixel = 0,
-		GroupTransparency = 1,
-		Visible = false,
-		ZIndex = 2,
-		Parent = self.Holder,
-	})
-	corner(self.Main, 14)
-	stroke(self.Main, Theme.Stroke, 1, 0.2)
-
-	---------------------------------------------------------------- сайдбар
-	local SIDE_W = 158
-	local side = create("Frame", {
-		Size = UDim2.new(0, SIDE_W, 1, 0),
-		BackgroundColor3 = Theme.Sidebar,
-		BackgroundTransparency = 0.02,
-		BorderSizePixel = 0,
-		Parent = self.Main,
-	})
-	create("Frame", {
-		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.fromScale(1, 0),
-		Size = UDim2.new(0, 1, 1, 0),
-		BackgroundColor3 = Theme.Divider,
-		BorderSizePixel = 0,
-		Parent = side,
-	})
-
-	local logoArea = create("Frame", {
-		Size = UDim2.new(1, 0, 0, 64),
-		BackgroundTransparency = 1,
-		Parent = side,
-	})
-	local logoText = opts.Logo or string.upper(string.sub(title, 1, 2))
-	local logo = label(logoArea, logoText, 17, WHITE, Enum.Font.GothamBlack, Enum.TextXAlignment.Center)
-	logo.Position = UDim2.fromOffset(14, 14)
-	logo.Size = UDim2.fromOffset(34, 34)
-	local tl = label(logoArea, title, 14, WHITE, FONT_BOLD)
-	tl.Position = UDim2.fromOffset(54, 15)
-	tl.Size = UDim2.new(1, -60, 0, 18)
-	tl.TextTruncate = Enum.TextTruncate.AtEnd
-	local sl = label(logoArea, opts.Subtitle or "", 10, Theme.SubText)
-	sl.Position = UDim2.fromOffset(54, 33)
-	sl.Size = UDim2.new(1, -60, 0, 14)
-	sl.TextTruncate = Enum.TextTruncate.AtEnd
-	create("Frame", {
-		Position = UDim2.new(0, 14, 1, 0),
-		Size = UDim2.new(1, -28, 0, 1),
-		BackgroundColor3 = Theme.Divider,
-		BorderSizePixel = 0,
-		Parent = logoArea,
-	})
-
-	-- список вкладок (ScrollingFrame, чтобы ничего не уезжало)
-	self.Nav = create("ScrollingFrame", {
-		Position = UDim2.fromOffset(0, 66),
-		Size = UDim2.new(1, -1, 1, -66 - 62),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		ScrollBarThickness = 0,
-		CanvasSize = UDim2.new(),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		Parent = side,
-	})
-	create("UIPadding", {
-		PaddingTop = UDim.new(0, 8),
-		PaddingLeft = UDim.new(0, 10),
-		PaddingRight = UDim.new(0, 10),
-		Parent = self.Nav,
-	})
-	create("UIListLayout", {
-		Padding = UDim.new(0, 2),
-		SortOrder = Enum.SortOrder.LayoutOrder,
-		Parent = self.Nav,
-	})
-
-	-- карточка пользователя
-	create("Frame", {
-		Position = UDim2.new(0, 14, 1, -62),
-		Size = UDim2.new(1, -28, 0, 1),
-		BackgroundColor3 = Theme.Divider,
-		BorderSizePixel = 0,
-		Parent = side,
-	})
-	local userBtn = create("TextButton", {
-		Position = UDim2.new(0, 10, 1, -52),
-		Size = UDim2.new(1, -20, 0, 42),
-		BackgroundColor3 = Theme.Active,
-		BackgroundTransparency = 1,
-		Text = "",
-		AutoButtonColor = false,
-		Parent = side,
-	})
-	corner(userBtn, 8)
-	local lp = Players.LocalPlayer
-	local avatar = create("ImageLabel", {
-		Position = UDim2.fromOffset(6, 6),
-		Size = UDim2.fromOffset(30, 30),
-		BackgroundColor3 = Theme.Box,
-		BorderSizePixel = 0,
-		Parent = userBtn,
-	})
-	corner(avatar, 15)
-	task.spawn(function()
-		local ok, img = pcall(function()
-			return Players:GetUserThumbnailAsync(lp.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-		end)
-		if ok and img then
-			avatar.Image = img
-		end
-	end)
-	local un = label(userBtn, lp.DisplayName, 13, WHITE, FONT_BOLD)
-	un.Position = UDim2.fromOffset(44, 5)
-	un.Size = UDim2.new(1, -72, 0, 16)
-	un.TextTruncate = Enum.TextTruncate.AtEnd
-	local ui = label(userBtn, opts.UserInfo or "@" .. lp.Name, 11, Theme.SubText)
-	ui.Position = UDim2.fromOffset(44, 21)
-	ui.Size = UDim2.new(1, -72, 0, 14)
-	ui.TextTruncate = Enum.TextTruncate.AtEnd
-	local uc = icon(userBtn, "chevright", Theme.SubText)
-	placeIcon(uc, 1, 1, -4)
-	userBtn.MouseEnter:Connect(function()
-		tween(userBtn, 0.12, { BackgroundTransparency = 0.5 })
-	end)
-	userBtn.MouseLeave:Connect(function()
-		tween(userBtn, 0.12, { BackgroundTransparency = 1 })
-	end)
-	userBtn.MouseButton1Click:Connect(function()
-		self:_openSettings(userBtn)
-	end)
-
-	---------------------------------------------------------------- контент
-	local content = create("Frame", {
-		Position = UDim2.fromOffset(SIDE_W, 0),
-		Size = UDim2.new(1, -SIDE_W, 1, 0),
-		BackgroundTransparency = 1,
-		Parent = self.Main,
-	})
-	local topbar = create("Frame", {
-		Size = UDim2.new(1, 0, 0, 56),
-		BackgroundColor3 = Theme.Toolbar,
-		BackgroundTransparency = 0.04,
-		BorderSizePixel = 0,
-		Parent = content,
-	})
-	create("Frame", {
-		AnchorPoint = Vector2.new(0, 1),
-		Position = UDim2.fromScale(0, 1),
-		Size = UDim2.new(1, 0, 0, 1),
-		BackgroundColor3 = Theme.Divider,
-		BorderSizePixel = 0,
-		Parent = topbar,
-	})
-	self.Pages = create("Frame", {
-		Position = UDim2.fromOffset(0, 57),
-		Size = UDim2.new(1, 0, 1, -57),
-		ClipsDescendants = true,
-		BackgroundTransparency = 1,
-		Parent = content,
-	})
-
-	self.TopLeft = create("Frame", {
-		Size = UDim2.new(1, -70, 1, 0),
-		BackgroundTransparency = 1,
-		Parent = topbar,
-	})
-	create("UIPadding", { PaddingLeft = UDim.new(0, 14), Parent = self.TopLeft })
-	create("UIListLayout", {
-		FillDirection = Enum.FillDirection.Horizontal,
-		VerticalAlignment = Enum.VerticalAlignment.Center,
-		Padding = UDim.new(0, 8),
-		SortOrder = Enum.SortOrder.LayoutOrder,
-		Parent = self.TopLeft,
-	})
-
-	-- кнопка пресетов
-	local presetBtn = create("TextButton", {
-		Size = UDim2.fromOffset(150, 30),
-		BackgroundColor3 = Theme.Box,
-		Text = "",
-		AutoButtonColor = false,
-		LayoutOrder = 0,
-		Parent = self.TopLeft,
-	})
-	self._presetBtn = presetBtn
-	corner(presetBtn, 8)
-	stroke(presetBtn, Theme.Stroke, 1, 0.4)
-	local psave = icon(presetBtn, "save", WHITE)
-	placeIcon(psave, 0, 0, 9)
-	create("Frame", {
-		Position = UDim2.fromOffset(34, 6),
-		Size = UDim2.new(0, 1, 1, -12),
-		BackgroundColor3 = Theme.Stroke,
-		BorderSizePixel = 0,
-		Parent = presetBtn,
-	})
-	self._presetLabel = label(presetBtn, "No preset", 12, Theme.Text)
-	self._presetLabel.Position = UDim2.fromOffset(44, 0)
-	self._presetLabel.Size = UDim2.new(1, -70, 1, 0)
-	self._presetLabel.TextTruncate = Enum.TextTruncate.AtEnd
-	local pch = icon(presetBtn, "chevdown", Theme.SubText)
-	placeIcon(pch, 1, 1, -4)
-	presetBtn.MouseButton1Click:Connect(function()
-		self:_openPresets(presetBtn)
-	end)
-
-	-- поиск
-	local searchBtn = create("TextButton", {
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -14, 0.5, 0),
-		Size = UDim2.fromOffset(30, 30),
-		BackgroundColor3 = Theme.Active,
-		BackgroundTransparency = 1,
-		Text = "",
-		AutoButtonColor = false,
-		Parent = topbar,
-	})
-	corner(searchBtn, 8)
-	local sic = icon(searchBtn, "search", WHITE)
-	placeIcon(sic, 0.5, 0.5, 0)
-	local searchBox = create("Frame", {
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -52, 0.5, 0),
-		Size = UDim2.fromOffset(170, 28),
-		BackgroundColor3 = Theme.Box,
-		Visible = false,
-		Parent = topbar,
-	})
-	corner(searchBox, 8)
-	local searchInput = create("TextBox", {
-		Position = UDim2.fromOffset(10, 0),
-		Size = UDim2.new(1, -20, 1, 0),
-		BackgroundTransparency = 1,
-		Text = "",
-		PlaceholderText = "Search",
-		PlaceholderColor3 = Theme.SubText,
-		TextColor3 = Theme.Text,
-		TextSize = 12,
-		Font = FONT,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ClearTextOnFocus = false,
-		Parent = searchBox,
-	})
-	searchBtn.MouseButton1Click:Connect(function()
-		searchBox.Visible = not searchBox.Visible
-		if searchBox.Visible then
-			searchInput:CaptureFocus()
+		local accessoryAttachment = handle:FindFirstChildOfClass("Attachment")
+		local bodyAttachment = accessoryAttachment and findBodyAttachment(character, accessoryAttachment.Name)
+		if bodyAttachment then
+			weld.Part1 = bodyAttachment.Parent
+			weld.C0 = accessoryAttachment.CFrame
+			weld.C1 = bodyAttachment.CFrame
 		else
-			searchInput.Text = ""
-		end
-	end)
-	searchInput:GetPropertyChangedSignal("Text"):Connect(function()
-		self:_applySearch(searchInput.Text)
-	end)
-
-	-- перетаскивание за верхнюю панель и логотип
-	local function makeDraggable(handle)
-		handle.InputBegan:Connect(function(input)
-			if not isPointer(input) then
+			local head = character:FindFirstChild("Head")
+			if not head then
+				accessory.Parent = character
 				return
 			end
-			local startMouse = input.Position
-			local startPos = self.Holder.Position
-			local move = UserInputService.InputChanged:Connect(function(i)
-				if i.UserInputType == MOVE or i.UserInputType == TOUCH then
-					local d = (i.Position - startMouse) / self.Scale
-					self.Holder.Position =
-						UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+			local hatAttachment = head:FindFirstChild("HatAttachment")
+			weld.Part1 = head
+			weld.C0 = accessory.AttachmentPoint
+			weld.C1 = hatAttachment and hatAttachment.CFrame or CFrame.new(0, head.Size.Y / 2, 0)
+		end
+
+		accessory.Parent = character
+		weld.Parent = handle
+	end
+
+	local function applyAppearance(character, appearance, parts)
+		removeKinds(character, parts)
+		for _, item in ipairs(appearance:GetChildren()) do
+			if item:IsA("Accoutrement") then
+				if parts.Accessories then
+					addAccessory(character, item:Clone())
 				end
-			end)
-			local finish
-			finish = UserInputService.InputEnded:Connect(function(i)
-				if i.UserInputType == input.UserInputType then
-					move:Disconnect()
-					finish:Disconnect()
+			elseif CLOTHING[item.ClassName] then
+				if parts.Clothing then
+					item:Clone().Parent = character
 				end
-			end)
-		end)
-	end
-	makeDraggable(topbar)
-	makeDraggable(logoArea)
-
-	---------------------------------------------------------------- оверлей
-	self.Overlay = create("Frame", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		Visible = false,
-		ZIndex = 100,
-		Parent = self.Root,
-	})
-	local catcher = create("TextButton", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		Text = "",
-		AutoButtonColor = false,
-		ZIndex = 1,
-		Parent = self.Overlay,
-	})
-	catcher.MouseButton1Click:Connect(function()
-		self:_closePopup()
-	end)
-
-	if opts.Blur ~= false then
-		self.BlurSize = opts.BlurSize or 12
-		self.Blur = create("BlurEffect", { Size = 0, Name = "NeverloseBlur", Parent = Lighting })
-	end
-
-	self._splashing = false
-	self:_connect(UserInputService.InputBegan, function(input, gp)
-		if gp then
-			return
-		end
-		if self._ready and input.KeyCode == self.ToggleKey then
-			self:SetVisible(not self.Visible)
-		elseif input.KeyCode == Enum.KeyCode.F5 and self._ready and opts.ReplayKey ~= false then
-			self:Replay() -- F5: повтор стартовой анимации
-		elseif input.KeyCode == Enum.KeyCode.Escape and self._splashing then
-			self._skipSplash = true -- Esc: пропустить интро
-		end
-	end)
-
-	self:_readPresets()
-
-	-- стартовая анимация
-	self._title = title
-	if opts.Intro == false then
-		self._ready = true
-		self:SetVisible(true)
-	else
-		self:_intro()
-	end
-
-	return self
-end
-
--- стартовая заставка (~3.4 c; Esc пропускает), затем меню плавно появляется
-function Library:_intro()
-	if self._splashing then
-		return
-	end
-	self._splashing = true
-	self._skipSplash = false
-	self._ready = false
-	task.spawn(function()
-		local function wait(sec)
-			local t0 = os.clock()
-			while os.clock() - t0 < sec and not self._skipSplash do
-				task.wait()
-			end
-		end
-		local splash = create("TextLabel", {
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.fromScale(0.5, 0.5),
-			Size = UDim2.fromOffset(500, 70),
-			BackgroundTransparency = 1,
-			Text = self._title,
-			TextSize = 44,
-			Font = Enum.Font.GothamBlack,
-			TextColor3 = WHITE,
-			TextTransparency = 1,
-			Parent = self.Root,
-		})
-		local line = create("Frame", {
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.new(0.5, 0, 0.5, 36),
-			Size = UDim2.fromOffset(0, 2),
-			BackgroundColor3 = self.Accent,
-			BorderSizePixel = 0,
-			Parent = self.Root,
-		})
-		if self.Visible then
-			self:SetVisible(false)
-			wait(0.25)
-		end
-		tween(splash, 0.6, { TextTransparency = 0 })
-		tween(line, 0.9, { Size = UDim2.fromOffset(220, 2) }, Enum.EasingStyle.Quart)
-		wait(2.4)
-		tween(splash, 0.4, { TextTransparency = 1 })
-		tween(line, 0.4, { BackgroundTransparency = 1 })
-		wait(0.4)
-		splash:Destroy()
-		line:Destroy()
-		self._splashing = false
-		self._ready = true
-		self:SetVisible(true)
-	end)
-end
-
-function Library:Replay()
-	self:_intro()
-end
-
-function Library:_connect(signal, fn)
-	local c = signal:Connect(fn)
-	table.insert(self._conns, c)
-	return c
-end
-
-function Library:_next()
-	self._order += 1
-	return self._order
-end
-
-function Library:_onAccent(fn)
-	table.insert(self._accentFns, fn)
-	fn(self.Accent)
-end
-
-function Library:SetAccent(color)
-	self.Accent = color
-	for _, fn in ipairs(self._accentFns) do
-		fn(color)
-	end
-end
-
-function Library:SetScale(scale)
-	scale = math.max(0.5, scale)
-	self.Scale = scale
-	self.UIScale.Scale = scale
-	self.Root.Size = UDim2.fromScale(1 / scale, 1 / scale)
-end
-
-function Library:SetVisible(v)
-	self.Visible = v
-	local t = v and 0.48 or 0.2
-	if v then
-		self.Main.Visible = true
-		self.Main.Position = UDim2.fromOffset(0, 16) -- подъём на 16 px
-	end
-	tween(self.Main, t, { GroupTransparency = v and 0 or 1, Position = UDim2.fromOffset(0, v and 0 or 8) }, Enum.EasingStyle.Quint)
-	tween(self.Pop, t, { Scale = v and 1 or 0.96 }, Enum.EasingStyle.Quint)
-	for _, s in ipairs(self._shadows) do
-		tween(s.frame, t, { BackgroundTransparency = v and s.base or 1 })
-	end
-	if self.Blur then
-		tween(self.Blur, 0.25, { Size = v and self.BlurSize or 0 })
-	end
-	if not v then
-		self:_closePopup()
-		task.delay(0.2, function()
-			if not self.Visible then
-				self.Main.Visible = false
-			end
-		end)
-	end
-end
-
-function Library:Destroy()
-	for _, c in ipairs(self._conns) do
-		c:Disconnect()
-	end
-	if self.Blur then
-		self.Blur:Destroy()
-	end
-	self.Gui:Destroy()
-end
-
----------------------------------------------------------------------
--- попапы
----------------------------------------------------------------------
-function Library:_closePopup()
-	if self._popupFrame then
-		self._popupFrame:Destroy()
-		self._popupFrame = nil
-	end
-	self.Overlay.Visible = false
-end
-
--- opts: { above = bool, right = bool }
-function Library:_popup(anchor, width, height, build, opts)
-	opts = opts or {}
-	self:_closePopup()
-	local aPos = (anchor.AbsolutePosition - self.Root.AbsolutePosition) / self.Scale
-	local aSize = anchor.AbsoluteSize / self.Scale
-	local rootSize = self.Root.AbsoluteSize / self.Scale
-
-	local x = opts.right and (aPos.X + aSize.X - width) or aPos.X
-	local y = opts.above and (aPos.Y - height - 6) or (aPos.Y + aSize.Y + 6)
-	x = math.clamp(x, 4, math.max(4, rootSize.X - width - 4))
-	if y + height > rootSize.Y - 4 then
-		y = aPos.Y - height - 6
-	end
-	y = math.max(4, y)
-
-	local holder = create("Frame", {
-		Position = UDim2.fromOffset(x, y),
-		Size = UDim2.fromOffset(width, height),
-		BackgroundTransparency = 1,
-		ZIndex = 2,
-		Parent = self.Overlay,
-	})
-	for i = 1, 4 do
-		local sh = create("Frame", {
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.new(0.5, 0, 0.5, 4),
-			Size = UDim2.new(1, i * 6, 1, i * 6),
-			BackgroundColor3 = Color3.new(0, 0, 0),
-			BackgroundTransparency = 0.92,
-			BorderSizePixel = 0,
-			ZIndex = 1,
-			Parent = holder,
-		})
-		corner(sh, 12 + i * 4)
-	end
-	local frame = create("Frame", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = Theme.Popup,
-		BackgroundTransparency = 0.02,
-		BorderSizePixel = 0,
-		Active = true,
-		ZIndex = 2,
-		Parent = holder,
-	})
-	corner(frame, 15)
-	stroke(frame, Theme.Stroke, 1, 0.1)
-	self._popupFrame = holder
-	self.Overlay.Visible = true
-	build(frame)
-
-	-- fade-scale-rise
-	local sc = create("UIScale", { Scale = 0.94, Parent = holder })
-	holder.Position = UDim2.fromOffset(x, y + 8)
-	tween(sc, 0.18, { Scale = 1 }, Enum.EasingStyle.Quint)
-	tween(holder, 0.18, { Position = UDim2.fromOffset(x, y) }, Enum.EasingStyle.Quint)
-	return frame
-end
-
--- выпадающий список
-function Library:_listPopup(anchor, items, isSel, onPick, keepOpen)
-	local lib = self
-	local h = math.min(#items * 28 + 10, 200)
-	local w = math.max(anchor.AbsoluteSize.X / self.Scale, 110)
-	self:_popup(anchor, w, h, function(frame)
-		local sc = create("ScrollingFrame", {
-			Position = UDim2.fromOffset(4, 4),
-			Size = UDim2.new(1, -8, 1, -8),
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			ScrollBarThickness = 2,
-			CanvasSize = UDim2.new(),
-			AutomaticCanvasSize = Enum.AutomaticSize.Y,
-			Parent = frame,
-		})
-		create("UIListLayout", { Padding = UDim.new(0, 2), Parent = sc })
-		local buttons, checks = {}, {}
-		local function paint()
-			for it, b in pairs(buttons) do
-				local sel = isSel(it)
-				b.TextColor3 = sel and WHITE or Theme.SubText
-				b.BackgroundTransparency = sel and 0 or 1
-				checks[it].Visible = sel
-				tint(checks[it], lib.Accent)
-			end
-		end
-		for _, it in ipairs(items) do
-			local b = create("TextButton", {
-				Size = UDim2.new(1, -4, 0, 26),
-				BackgroundColor3 = Theme.Active,
-				BackgroundTransparency = 1,
-				Text = tostring(it),
-				TextXAlignment = Enum.TextXAlignment.Left,
-				TextSize = 13,
-				Font = FONT,
-				AutoButtonColor = false,
-				Parent = sc,
-			})
-			create("UIPadding", { PaddingLeft = UDim.new(0, 28), Parent = b })
-			corner(b, 8)
-			buttons[it] = b
-			-- левая галочка выбранного пункта
-			local ck = icon(b, "check", lib.Accent)
-			ck.Position = UDim2.fromOffset(-24, 4)
-			ck.Visible = false
-			checks[it] = ck
-			b.MouseButton1Click:Connect(function()
-				onPick(it)
-				paint()
-				if not keepOpen then
-					lib:_closePopup()
+			elseif item:IsA("BodyColors") then
+				if parts["Body Colors"] then
+					item:Clone().Parent = character
 				end
-			end)
-		end
-		paint()
-	end, { right = true })
-end
-
----------------------------------------------------------------------
--- колорпикер (попап)
----------------------------------------------------------------------
--- st: { h, s, v, a, name, changed = function() }
-function Library:_openColor(anchor, st)
-	self:_popup(anchor, 250, 296, function(frame)
-		local function col()
-			return Color3.fromHSV(st.h, st.s, st.v)
-		end
-
-		local chip = create("Frame", {
-			Position = UDim2.fromOffset(12, 12),
-			Size = UDim2.fromOffset(96, 26),
-			BackgroundColor3 = Theme.Box,
-			BorderSizePixel = 0,
-			Parent = frame,
-		})
-		corner(chip, 8)
-		local chipDot = create("Frame", {
-			AnchorPoint = Vector2.new(0, 0.5),
-			Position = UDim2.new(0, 8, 0.5, 0),
-			Size = UDim2.fromOffset(12, 12),
-			BackgroundColor3 = col(),
-			BorderSizePixel = 0,
-			Parent = chip,
-		})
-		corner(chipDot, 6)
-		local chipName = label(chip, st.name or "Color", 12, Theme.Text)
-		chipName.Position = UDim2.fromOffset(28, 0)
-		chipName.Size = UDim2.new(1, -32, 1, 0)
-		chipName.TextTruncate = Enum.TextTruncate.AtEnd
-
-		-- SV поле
-		local sv = create("Frame", {
-			Position = UDim2.fromOffset(12, 48),
-			Size = UDim2.fromOffset(226, 150),
-			BackgroundColor3 = Color3.fromHSV(st.h, 1, 1),
-			BorderSizePixel = 0,
-			Parent = frame,
-		})
-		corner(sv, 8)
-		local white = create("Frame", {
-			Size = UDim2.fromScale(1, 1),
-			BackgroundColor3 = WHITE,
-			BorderSizePixel = 0,
-			Parent = sv,
-		})
-		corner(white, 8)
-		create("UIGradient", { Transparency = NumberSequence.new(0, 1), Parent = white })
-		local black = create("Frame", {
-			Size = UDim2.fromScale(1, 1),
-			BackgroundColor3 = Color3.new(0, 0, 0),
-			BorderSizePixel = 0,
-			Parent = sv,
-		})
-		corner(black, 8)
-		create("UIGradient", { Rotation = 90, Transparency = NumberSequence.new(1, 0), Parent = black })
-		local cursor = create("Frame", {
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Size = UDim2.fromOffset(14, 14),
-			BackgroundColor3 = col(),
-			BorderSizePixel = 0,
-			Parent = sv,
-		})
-		corner(cursor, 7)
-		stroke(cursor, WHITE, 2)
-
-		-- Hue
-		local hueTrack = create("Frame", {
-			Position = UDim2.fromOffset(12, 206),
-			Size = UDim2.fromOffset(226, 10),
-			BackgroundTransparency = 1,
-			Parent = frame,
-		})
-		local hueBar = create("Frame", {
-			Size = UDim2.fromScale(1, 1),
-			BackgroundColor3 = WHITE,
-			BorderSizePixel = 0,
-			Parent = hueTrack,
-		})
-		corner(hueBar, 5)
-		local seq = {}
-		for i = 0, 6 do
-			table.insert(seq, ColorSequenceKeypoint.new(i / 6, Color3.fromHSV(i == 6 and 0 or i / 6, 1, 1)))
-		end
-		create("UIGradient", { Color = ColorSequence.new(seq), Parent = hueBar })
-		local hueKnob = create("Frame", {
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Size = UDim2.fromOffset(14, 14),
-			BackgroundColor3 = Color3.fromHSV(st.h, 1, 1),
-			BorderSizePixel = 0,
-			Parent = hueTrack,
-		})
-		corner(hueKnob, 7)
-		stroke(hueKnob, WHITE, 2)
-
-		-- Alpha
-		local alphaTrack = create("Frame", {
-			Position = UDim2.fromOffset(12, 224),
-			Size = UDim2.fromOffset(226, 10),
-			BackgroundTransparency = 1,
-			Parent = frame,
-		})
-		local alphaCanvas = create("CanvasGroup", {
-			Size = UDim2.fromScale(1, 1),
-			BackgroundColor3 = Color3.fromRGB(72, 76, 88),
-			BorderSizePixel = 0,
-			Parent = alphaTrack,
-		})
-		corner(alphaCanvas, 5)
-		for c = 0, 45 do
-			for r = 0, 1 do
-				if (c + r) % 2 == 0 then
-					create("Frame", {
-						Position = UDim2.fromOffset(c * 5, r * 5),
-						Size = UDim2.fromOffset(5, 5),
-						BackgroundColor3 = Color3.fromRGB(48, 52, 62),
-						BorderSizePixel = 0,
-						Parent = alphaCanvas,
-					})
+			elseif item:IsA("Decal") then
+				local face = getFace(character)
+				if parts.Face and face then
+					face.Texture = item.Texture
 				end
 			end
 		end
-		local alphaOverlay = create("Frame", {
-			Size = UDim2.fromScale(1, 1),
-			BackgroundColor3 = col(),
-			BorderSizePixel = 0,
-			Parent = alphaCanvas,
-		})
-		create("UIGradient", { Transparency = NumberSequence.new(1, 0), Parent = alphaOverlay })
-		local alphaKnob = create("Frame", {
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Size = UDim2.fromOffset(14, 14),
-			BackgroundColor3 = col(),
-			BorderSizePixel = 0,
-			Parent = alphaTrack,
-		})
-		corner(alphaKnob, 7)
-		stroke(alphaKnob, WHITE, 2)
-
-		create("Frame", {
-			Position = UDim2.fromOffset(12, 246),
-			Size = UDim2.fromOffset(226, 1),
-			BackgroundColor3 = Theme.Divider,
-			BorderSizePixel = 0,
-			Parent = frame,
-		})
-
-		-- HEX
-		local hl = label(frame, "HEX", 12, Theme.SubText, FONT_BOLD)
-		hl.Position = UDim2.fromOffset(12, 254)
-		hl.Size = UDim2.fromOffset(44, 28)
-		local hexField = create("Frame", {
-			Position = UDim2.fromOffset(58, 254),
-			Size = UDim2.fromOffset(180, 28),
-			BackgroundColor3 = Theme.Box,
-			BorderSizePixel = 0,
-			Parent = frame,
-		})
-		corner(hexField, 8)
-		local hexDot = create("Frame", {
-			AnchorPoint = Vector2.new(0, 0.5),
-			Position = UDim2.new(0, 8, 0.5, 0),
-			Size = UDim2.fromOffset(14, 14),
-			BackgroundColor3 = col(),
-			BorderSizePixel = 0,
-			Parent = hexField,
-		})
-		corner(hexDot, 7)
-		local hexBox = create("TextBox", {
-			Position = UDim2.fromOffset(30, 0),
-			Size = UDim2.new(1, -36, 1, 0),
-			BackgroundTransparency = 1,
-			Text = "",
-			TextColor3 = Theme.Text,
-			TextSize = 12,
-			Font = FONT,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			ClearTextOnFocus = false,
-			Parent = hexField,
-		})
-
-		local function refresh(fire)
-			local c = col()
-			local hc = Color3.fromHSV(st.h, 1, 1)
-			sv.BackgroundColor3 = hc
-			cursor.Position = UDim2.fromScale(st.s, 1 - st.v)
-			cursor.BackgroundColor3 = c
-			hueKnob.Position = UDim2.fromScale(st.h, 0.5)
-			hueKnob.BackgroundColor3 = hc
-			alphaOverlay.BackgroundColor3 = c
-			alphaKnob.Position = UDim2.fromScale(st.a, 0.5)
-			alphaKnob.BackgroundColor3 = c
-			chipDot.BackgroundColor3 = c
-			hexDot.BackgroundColor3 = c
-			hexBox.Text = hexOf(c, st.a)
-			if fire and st.changed then
-				st.changed()
-			end
-		end
-
-		dragger(sv, function(pos)
-			st.s = math.clamp((pos.X - sv.AbsolutePosition.X) / sv.AbsoluteSize.X, 0, 1)
-			st.v = 1 - math.clamp((pos.Y - sv.AbsolutePosition.Y) / sv.AbsoluteSize.Y, 0, 1)
-			refresh(true)
-		end)
-		dragger(hueTrack, function(pos)
-			st.h = math.clamp((pos.X - hueTrack.AbsolutePosition.X) / hueTrack.AbsoluteSize.X, 0, 0.999)
-			refresh(true)
-		end)
-		dragger(alphaTrack, function(pos)
-			st.a = math.clamp((pos.X - alphaTrack.AbsolutePosition.X) / alphaTrack.AbsoluteSize.X, 0, 1)
-			refresh(true)
-		end)
-		hexBox.FocusLost:Connect(function()
-			local t = hexBox.Text:gsub("[^%x]", "")
-			if #t == 6 or #t == 8 then
-				local r = tonumber(t:sub(1, 2), 16)
-				local g = tonumber(t:sub(3, 4), 16)
-				local b = tonumber(t:sub(5, 6), 16)
-				st.h, st.s, st.v = Color3.toHSV(Color3.fromRGB(r, g, b))
-				if #t == 8 then
-					st.a = tonumber(t:sub(7, 8), 16) / 255
-				end
-			end
-			refresh(true)
-		end)
-		refresh(false)
-	end, { right = true })
-end
-
----------------------------------------------------------------------
--- пресеты
----------------------------------------------------------------------
-function Library:_snapshot()
-	local snap = {}
-	for flag, c in pairs(self._ctrls) do
-		snap[flag] = c.Save()
-	end
-	return snap
-end
-
-function Library:_applySnapshot(snap)
-	for flag, v in pairs(snap) do
-		local c = self._ctrls[flag]
-		if c then
-			pcall(c.Load, v)
-		end
-	end
-end
-
-function Library:_writePresets()
-	if writefile then
-		pcall(function()
-			writefile(self._cfgFile, HttpService:JSONEncode({ presets = self.Presets, current = self.PresetName }))
-		end)
-	end
-end
-
-function Library:_readPresets()
-	if readfile and isfile then
-		pcall(function()
-			if isfile(self._cfgFile) then
-				local data = HttpService:JSONDecode(readfile(self._cfgFile))
-				self.Presets = data.presets or {}
-				self.PresetName = data.current
-				if self.PresetName then
-					self._presetLabel.Text = self.PresetName
-				end
-			end
-		end)
-	end
-end
-
-function Library:SavePreset(name)
-	self.Presets[name] = self:_snapshot()
-	self.PresetName = name
-	self._presetLabel.Text = name
-	self:_writePresets()
-end
-
-function Library:LoadPreset(name)
-	local snap = self.Presets[name]
-	if snap then
-		self:_applySnapshot(snap)
-		self.PresetName = name
-		self._presetLabel.Text = name
-		self:_writePresets()
-	end
-end
-
-function Library:DeletePreset(name)
-	self.Presets[name] = nil
-	if self.PresetName == name then
-		self.PresetName = nil
-		self._presetLabel.Text = "No preset"
-	end
-	self:_writePresets()
-end
-
-function Library:_openPresets(anchor)
-	local lib = self
-	self:_popup(anchor, 300, 250, function(frame)
-		-- шапка
-		local head = create("Frame", {
-			Position = UDim2.fromOffset(8, 8),
-			Size = UDim2.new(1, -16, 0, 30),
-			BackgroundTransparency = 1,
-			Parent = frame,
-		})
-		local chip = create("Frame", {
-			Size = UDim2.fromOffset(92, 30),
-			BackgroundColor3 = Theme.Box,
-			BorderSizePixel = 0,
-			Parent = head,
-		})
-		corner(chip, 8)
-		local cic = icon(chip, "cloud", lib.Accent)
-		placeIcon(cic, 0, 0, 8)
-		local cl = label(chip, "Presets", 12, lib.Accent, FONT_BOLD)
-		cl.Position = UDim2.fromOffset(32, 0)
-		cl.Size = UDim2.new(1, -34, 1, 0)
-
-		local listFrame
-		local query = ""
-		local function render()
-			for _, c in ipairs(listFrame:GetChildren()) do
-				if c:IsA("Frame") then
-					c:Destroy()
-				end
-			end
-			local names = {}
-			for n in pairs(lib.Presets) do
-				if query == "" or n:lower():find(query, 1, true) then
-					table.insert(names, n)
-				end
-			end
-			table.sort(names)
-			for _, n in ipairs(names) do
-				local item = create("Frame", {
-					Size = UDim2.new(1, -4, 0, 34),
-					BackgroundColor3 = Theme.Box,
-					BorderSizePixel = 0,
-					Parent = listFrame,
-				})
-				corner(item, 8)
-				if lib.PresetName == n then
-					stroke(item, lib.Accent, 1, 0.3)
-				end
-				local nb = create("TextButton", {
-					Size = UDim2.new(1, -44, 1, 0),
-					BackgroundTransparency = 1,
-					Text = "  " .. n,
-					TextXAlignment = Enum.TextXAlignment.Left,
-					TextColor3 = Theme.Text,
-					TextSize = 12,
-					Font = FONT,
-					AutoButtonColor = false,
-					Parent = item,
-				})
-				nb.MouseButton1Click:Connect(function()
-					lib:LoadPreset(n)
-					render()
-				end)
-				local sb = create("TextButton", {
-					AnchorPoint = Vector2.new(1, 0.5),
-					Position = UDim2.new(1, -6, 0.5, 0),
-					Size = UDim2.fromOffset(26, 26),
-					BackgroundTransparency = 1,
-					Text = "",
-					AutoButtonColor = false,
-					Parent = item,
-				})
-				local sbi = icon(sb, "save", Theme.SubText)
-				placeIcon(sbi, 0.5, 0.5, 0)
-				sb.MouseButton1Click:Connect(function()
-					lib:SavePreset(n)
-					render()
-				end)
-			end
-		end
-
-		local function headBtn(iconName, offX, cb)
-			local b = create("TextButton", {
-				AnchorPoint = Vector2.new(1, 0.5),
-				Position = UDim2.new(1, offX, 0.5, 0),
-				Size = UDim2.fromOffset(28, 28),
-				BackgroundTransparency = 1,
-				Text = "",
-				AutoButtonColor = false,
-				Parent = head,
-			})
-			local i = icon(b, iconName, Theme.SubText)
-			placeIcon(i, 0.5, 0.5, 0)
-			b.MouseEnter:Connect(function()
-				tint(i, lib.Accent)
-			end)
-			b.MouseLeave:Connect(function()
-				tint(i, Theme.SubText)
-			end)
-			b.MouseButton1Click:Connect(cb)
-		end
-		headBtn("plus", 0, function()
-			local n = 1
-			while lib.Presets["Preset " .. n] do
-				n += 1
-			end
-			lib:SavePreset("Preset " .. n)
-			render()
-		end)
-		headBtn("trash", -30, function()
-			if lib.PresetName then
-				lib:DeletePreset(lib.PresetName)
-				render()
-			end
-		end)
-		headBtn("upload", -60, function()
-			if setclipboard and lib.PresetName then
-				pcall(function()
-					setclipboard(HttpService:JSONEncode(lib.Presets[lib.PresetName]))
-				end)
-			end
-		end)
-
-		-- поиск
-		local sbox = create("Frame", {
-			Position = UDim2.fromOffset(8, 46),
-			Size = UDim2.new(1, -16, 0, 32),
-			BackgroundColor3 = Theme.Box,
-			BorderSizePixel = 0,
-			Parent = frame,
-		})
-		corner(sbox, 8)
-		local si = icon(sbox, "search", Theme.SubText)
-		placeIcon(si, 0, 0, 8)
-		local input = create("TextBox", {
-			Position = UDim2.fromOffset(34, 0),
-			Size = UDim2.new(1, -42, 1, 0),
-			BackgroundTransparency = 1,
-			Text = "",
-			PlaceholderText = "Search",
-			PlaceholderColor3 = Theme.SubText,
-			TextColor3 = Theme.Text,
-			TextSize = 12,
-			Font = FONT,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			ClearTextOnFocus = false,
-			Parent = sbox,
-		})
-		input:GetPropertyChangedSignal("Text"):Connect(function()
-			query = input.Text:lower()
-			render()
-		end)
-
-		listFrame = create("ScrollingFrame", {
-			Position = UDim2.fromOffset(8, 88),
-			Size = UDim2.new(1, -16, 1, -96),
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			ScrollBarThickness = 2,
-			CanvasSize = UDim2.new(),
-			AutomaticCanvasSize = Enum.AutomaticSize.Y,
-			Parent = frame,
-		})
-		create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = listFrame })
-		render()
-	end)
-end
-
----------------------------------------------------------------------
--- окно профиля / настройки меню
----------------------------------------------------------------------
-function Library:_openSettings(anchor)
-	local lib = self
-	local ROW = 28
-	self:_popup(anchor, 215, 395, function(frame)
-		local player = Players.LocalPlayer
-
-		-- шапка: аватар, имя, подпись
-		local av = create("ImageLabel", {
-			Position = UDim2.fromOffset(12, 12),
-			Size = UDim2.fromOffset(34, 34),
-			BackgroundColor3 = Theme.Box,
-			BorderSizePixel = 0,
-			Parent = frame,
-		})
-		corner(av, 17)
-		task.spawn(function()
-			local ok, img = pcall(function()
-				return Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-			end)
-			if ok and img then
-				av.Image = img
-			end
-		end)
-		local n = label(frame, player.DisplayName, 14, WHITE, FONT_BOLD)
-		n.Position = UDim2.fromOffset(54, 12)
-		n.Size = UDim2.new(1, -66, 0, 17)
-		n.TextTruncate = Enum.TextTruncate.AtEnd
-		local k = label(frame, "Toggle key: " .. lib.ToggleKey.Name, 12, Theme.SubText)
-		k.Position = UDim2.fromOffset(54, 29)
-		k.Size = UDim2.new(1, -66, 0, 16)
-
-		create("Frame", {
-			Position = UDim2.fromOffset(12, 56),
-			Size = UDim2.new(1, -24, 0, 1),
-			BackgroundColor3 = Theme.Divider,
-			BorderSizePixel = 0,
-			Parent = frame,
-		})
-
-		local y = 64
-		local function prow(iconName, text, cb)
-			local b = create("TextButton", {
-				Position = UDim2.fromOffset(6, y),
-				Size = UDim2.new(1, -12, 0, ROW),
-				BackgroundColor3 = Theme.Active,
-				BackgroundTransparency = 1,
-				Text = "",
-				AutoButtonColor = false,
-				Parent = frame,
-			})
-			y += ROW
-			corner(b, 6)
-			local ic = icon(b, iconName, Theme.SubText)
-			placeIcon(ic, 0, 0, 8)
-			local l = label(b, text, 13, Theme.Text)
-			l.Position = UDim2.fromOffset(34, 0)
-			l.Size = UDim2.new(1, -90, 1, 0)
-			b.MouseEnter:Connect(function()
-				tween(b, 0.1, { BackgroundTransparency = 0.4 })
-			end)
-			b.MouseLeave:Connect(function()
-				tween(b, 0.1, { BackgroundTransparency = 1 })
-			end)
-			if cb then
-				b.MouseButton1Click:Connect(cb)
-			end
-			return b, l
-		end
-		local function value(b, text)
-			local v = label(b, text, 12, Theme.SubText, FONT, Enum.TextXAlignment.Right)
-			v.AnchorPoint = Vector2.new(1, 0)
-			v.Position = UDim2.new(1, -10, 0, 0)
-			v.Size = UDim2.new(0, 56, 1, 0)
-			return v
-		end
-
-		-- 1) Config / Profile
-		prow("cloud", "Config", function()
-			lib:_openPresets(lib._presetBtn)
-		end)
-		prow("user", "Profile", function()
-			if setclipboard then
-				pcall(setclipboard, player.Name)
-			end
-		end)
-
-		-- 3) масштаб
-		local scales = { 0.75, 0.9, 1, 1.15, 1.25, 1.5 }
-		local sBtn = prow("sliders", "Menu Scale")
-		local sVal = value(sBtn, string.format("%d%%", math.floor(lib.Scale * 100 + 0.5)))
-		sBtn.MouseButton1Click:Connect(function()
-			local nextS = scales[1]
-			for _, s in ipairs(scales) do
-				if s > lib.Scale + 0.001 then
-					nextS = s
-					break
-				end
-			end
-			lib:SetScale(nextS)
-			sVal.Text = string.format("%d%%", math.floor(lib.Scale * 100 + 0.5))
-		end)
-
-		-- 4) акцент
-		local aBtn = prow("gear", "Accent")
-		local aSw = create("Frame", {
-			AnchorPoint = Vector2.new(1, 0.5),
-			Position = UDim2.new(1, -10, 0.5, 0),
-			Size = UDim2.fromOffset(14, 14),
-			BackgroundColor3 = lib.Accent,
-			BorderSizePixel = 0,
-			Parent = aBtn,
-		})
-		corner(aSw, 5)
-		aBtn.MouseButton1Click:Connect(function()
-			local st = { name = "Accent", a = 1 }
-			st.h, st.s, st.v = Color3.toHSV(lib.Accent)
-			function st.changed()
-				lib:SetAccent(Color3.fromHSV(st.h, st.s, st.v))
-				aSw.BackgroundColor3 = lib.Accent
-			end
-			lib:_openColor(aBtn, st)
-		end)
-
-		-- 5-8) сервисные строки
-		prow("layers", "Replay Intro  (F5)", function()
-			lib:_closePopup()
-			lib:Replay()
-		end)
-		prow("mouse", "Reset Position", function()
-			lib.Holder.Position = UDim2.fromScale(0.5, 0.5)
-		end)
-		prow("upload", "Copy Config", function()
-			if setclipboard then
-				pcall(function()
-					setclipboard(HttpService:JSONEncode(lib:_snapshot()))
-				end)
-			end
-		end)
-		prow("trash", "Unload Menu", function()
-			lib:Destroy()
-		end)
-
-		-- два тумблера: Blur / Auto-save
-		local function ptoggle(text, get, set)
-			local b = prow("dot", text)
-			local pill = create("Frame", {
-				AnchorPoint = Vector2.new(1, 0.5),
-				Position = UDim2.new(1, -10, 0.5, 0),
-				Size = UDim2.fromOffset(29, 18),
-				BackgroundColor3 = Theme.Off,
-				BorderSizePixel = 0,
-				Parent = b,
-			})
-			corner(pill, 9)
-			local knob = create("Frame", {
-				AnchorPoint = Vector2.new(0, 0.5),
-				Size = UDim2.fromOffset(14, 14),
-				BackgroundColor3 = Theme.OffKnob,
-				BorderSizePixel = 0,
-				Parent = pill,
-			})
-			corner(knob, 7)
-			local function paint(animate)
-				local on = get()
-				apply(pill, { BackgroundColor3 = on and lib.Accent or Theme.Off }, animate, 0.16)
-				apply(knob, {
-					Position = on and UDim2.new(1, -16, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
-					BackgroundColor3 = on and WHITE or Theme.OffKnob,
-				}, animate, 0.16)
-			end
-			paint(false)
-			b.MouseButton1Click:Connect(function()
-				set(not get())
-				paint(true)
-			end)
-		end
-		ptoggle("Background Blur", function()
-			return lib.Blur ~= nil and lib.BlurSize > 0
-		end, function(on)
-			if lib.Blur then
-				lib.BlurSize = on and (lib._opts.BlurSize or 12) or 0
-				if lib.Visible then
-					tween(lib.Blur, 0.2, { Size = lib.BlurSize })
-				end
-			end
-		end)
-		ptoggle("Auto-save Preset", function()
-			return lib.AutoSave == true
-		end, function(on)
-			lib.AutoSave = on
-		end)
-
-		-- style chip
-		local chip = create("Frame", {
-			Position = UDim2.fromOffset(12, y + 8),
-			Size = UDim2.fromOffset(104, 22),
-			BackgroundColor3 = Theme.Box,
-			BorderSizePixel = 0,
-			Parent = frame,
-		})
-		corner(chip, 11)
-		local cd = create("Frame", {
-			AnchorPoint = Vector2.new(0, 0.5),
-			Position = UDim2.new(0, 8, 0.5, 0),
-			Size = UDim2.fromOffset(8, 8),
-			BackgroundColor3 = Theme.Chip,
-			BorderSizePixel = 0,
-			Parent = chip,
-		})
-		corner(cd, 4)
-		local cl = label(chip, lib.PresetName or "Default style", 12, Theme.Chip, FONT_BOLD)
-		cl.Position = UDim2.fromOffset(22, 0)
-		cl.Size = UDim2.new(1, -26, 1, 0)
-		cl.TextTruncate = Enum.TextTruncate.AtEnd
-	end, { above = true })
-end
----------------------------------------------------------------------
--- поиск по элементам
----------------------------------------------------------------------
-function Library:_applySearch(q)
-	q = (q or ""):lower()
-	for _, tab in ipairs(self._allTabs) do
-		for _, g in ipairs(tab._groups) do
-			local any = false
-			local titleMatch = q == "" or g.Title:lower():find(q, 1, true) ~= nil
-			for _, row in ipairs(g._rows) do
-				local m = titleMatch or row.Name:lower():find(q, 1, true) ~= nil
-				row.Frame.Visible = m
-				any = any or m
-			end
-			g.Holder.Visible = any
-		end
-	end
-end
-
----------------------------------------------------------------------
--- верхний выпадающий список (рядом с пресетами)
----------------------------------------------------------------------
-function Library:TopDropdown(items, default, callback)
-	local lib = self
-	local value = default or items[1]
-	local b = create("TextButton", {
-		Size = UDim2.fromOffset(92, 30),
-		BackgroundColor3 = Theme.Box,
-		Text = "",
-		AutoButtonColor = false,
-		LayoutOrder = #self.TopLeft:GetChildren(),
-		Parent = self.TopLeft,
-	})
-	corner(b, 8)
-	stroke(b, Theme.Stroke, 1, 0.4)
-	local t = label(b, tostring(value), 12, Theme.Text)
-	t.Position = UDim2.fromOffset(12, 0)
-	t.Size = UDim2.new(1, -34, 1, 0)
-	t.TextTruncate = Enum.TextTruncate.AtEnd
-	local ch = icon(b, "chevdown", Theme.SubText)
-	placeIcon(ch, 1, 1, -4)
-
-	local api = {}
-	function api:Get()
-		return value
-	end
-	function api:Set(v)
-		value = v
-		t.Text = tostring(v)
-		if callback then
-			task.spawn(callback, v)
-		end
-	end
-	b.MouseButton1Click:Connect(function()
-		lib:_listPopup(b, items, function(it)
-			return it == value
-		end, function(it)
-			api:Set(it)
-		end, false)
-	end)
-	return api
-end
-
----------------------------------------------------------------------
--- вкладки
----------------------------------------------------------------------
-function Library:Category(name)
-	local holder = create("Frame", {
-		Size = UDim2.new(1, 0, 0, 24),
-		BackgroundTransparency = 1,
-		LayoutOrder = self:_next(),
-		Parent = self.Nav,
-	})
-	local l = label(holder, string.upper(name), 10, Theme.Faint, FONT_BOLD)
-	l.Position = UDim2.fromOffset(8, 4)
-	l.Size = UDim2.new(1, -8, 1, -4)
-	return l
-end
-Library.Section = Library.Category
-
-local function makeTab(lib, name, icn, parent)
-	local tab = setmetatable({
-		Lib = lib,
-		Name = name,
-		Parent = parent,
-		IsChild = parent ~= nil,
-		Children = {},
-		_groups = {},
-		_active = false,
-	}, Tab)
-
-	local indent = parent and 16 or 0
-	local holder = create("Frame", {
-		Size = UDim2.new(1, 0, 0, 32),
-		BackgroundTransparency = 1,
-		LayoutOrder = lib:_next(),
-		Visible = (parent == nil),
-		Parent = lib.Nav,
-	})
-	local btn = create("TextButton", {
-		Position = UDim2.fromOffset(indent, 1),
-		Size = UDim2.new(1, -indent, 0, 30), -- nav item 140x30
-		BackgroundColor3 = Theme.Active,
-		BackgroundTransparency = 1,
-		Text = "",
-		AutoButtonColor = false,
-		Parent = holder,
-	})
-	corner(btn, 6)
-	local ic = icon(btn, icn or "dot", Theme.SubText)
-	placeIcon(ic, 0, 0, 9)
-	local text = label(btn, name, 13, Theme.SubText)
-	text.Position = UDim2.fromOffset(36, 0)
-	text.Size = UDim2.new(1, -40, 1, 0)
-	text.TextTruncate = Enum.TextTruncate.AtEnd
-	tab.Holder = holder
-
-	function tab:_style(animate)
-		local on = self._active
-		apply(btn, { BackgroundTransparency = on and 0 or 1 }, animate)
-		apply(text, { TextColor3 = on and WHITE or Theme.SubText }, animate)
-		tint(ic, on and lib.Accent or Theme.SubText)
-	end
-	lib:_onAccent(function()
-		tab:_style(false)
-	end)
-
-	-- страница
-	local page = create("ScrollingFrame", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		ScrollBarThickness = 3,
-		ScrollBarImageColor3 = Theme.Stroke,
-		CanvasSize = UDim2.new(),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		Visible = false,
-		Parent = lib.Pages,
-	})
-	create("UIPadding", {
-		PaddingTop = UDim.new(0, 14),
-		PaddingBottom = UDim.new(0, 14),
-		PaddingLeft = UDim.new(0, 14),
-		PaddingRight = UDim.new(0, 14),
-		Parent = page,
-	})
-	local function column(pos)
-		local col = create("Frame", {
-			Position = pos,
-			Size = UDim2.new(0.5, -7, 0, 0),
-			AutomaticSize = Enum.AutomaticSize.Y,
-			BackgroundTransparency = 1,
-			Parent = page,
-		})
-		create("UIListLayout", { Padding = UDim.new(0, 14), SortOrder = Enum.SortOrder.LayoutOrder, Parent = col })
-		return col
-	end
-	tab.Page = page
-	tab._left = column(UDim2.new(0, 0, 0, 0))
-	tab._right = column(UDim2.new(0.5, 7, 0, 0))
-
-	btn.MouseButton1Click:Connect(function()
-		lib:_select(tab)
-	end)
-	btn.MouseEnter:Connect(function()
-		if not tab._active then
-			tween(btn, 0.12, { BackgroundTransparency = 0.6 })
-		end
-	end)
-	btn.MouseLeave:Connect(function()
-		if not tab._active then
-			tween(btn, 0.12, { BackgroundTransparency = 1 })
-		end
-	end)
-
-	table.insert(lib._allTabs, tab)
-	if parent then
-		table.insert(parent.Children, tab)
-		if lib._active == parent then
-			lib:_select(tab)
-		end
-	end
-	if #lib._allTabs == 1 then
-		lib:_select(tab)
-	end
-	return tab
-end
-
-function Library:Tab(name, icn)
-	return makeTab(self, name, icn, nil)
-end
-
-function Tab:SubTab(name, icn)
-	return makeTab(self.Lib, name, icn, self)
-end
-
-function Library:_select(tab)
-	self:_closePopup()
-	if #tab.Children > 0 then
-		tab = tab.Children[1]
-	end
-	local changed = self._active ~= tab
-	self._active = tab
-	if changed and self._ready ~= nil then
-		-- смена страницы: подъём на 16 px за ~220 мс
-		tab.Page.Position = UDim2.fromOffset(0, 16)
-		tween(tab.Page, 0.22, { Position = UDim2.fromOffset(0, 0) }, Enum.EasingStyle.Quint)
-	end
-	for _, t in ipairs(self._allTabs) do
-		local on = (t == tab) or (tab.Parent == t)
-		t._active = on
-		t.Page.Visible = (t == tab)
-		if t.IsChild then
-			t.Holder.Visible = (t == tab) or (tab.Parent == t.Parent)
-		end
-		t:_style()
-	end
-end
-
-function Tab:Group(name, side)
-	local lib = self.Lib
-	local col = (side == "right") and self._right or self._left
-	local g = setmetatable({ Lib = lib, Title = name, _order = 0, _rows = {} }, Group)
-
-	g.Holder = create("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundTransparency = 1,
-		LayoutOrder = #col:GetChildren(),
-		Parent = col,
-	})
-	create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = g.Holder })
-	local head = label(g.Holder, string.upper(name), 10, Theme.Faint, FONT_BOLD)
-	head.Size = UDim2.new(1, 0, 0, 14)
-	head.LayoutOrder = 0
-	create("UIPadding", { PaddingLeft = UDim.new(0, 6), Parent = head })
-
-	g.Frame = create("Frame", {
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundColor3 = Theme.Card,
-		BackgroundTransparency = 0.02,
-		BorderSizePixel = 0,
-		LayoutOrder = 1,
-		Parent = g.Holder,
-	})
-	corner(g.Frame, 13)
-	stroke(g.Frame, Theme.Stroke, 1, 0)
-	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Parent = g.Frame })
-
-	table.insert(self._groups, g)
-	return g
-end
-
----------------------------------------------------------------------
--- строки и компоненты
----------------------------------------------------------------------
-function Group:_row(name, height)
-	self._order += 1
-	local row = create("Frame", {
-		Size = UDim2.new(1, 0, 0, height or 37),
-		BackgroundTransparency = 1,
-		LayoutOrder = self._order,
-		Parent = self.Frame,
-	})
-	local div = create("Frame", {
-		AnchorPoint = Vector2.new(0, 1),
-		Position = UDim2.new(0, 12, 1, 0),
-		Size = UDim2.new(1, -24, 0, 1),
-		BackgroundColor3 = Theme.Divider,
-		BorderSizePixel = 0,
-		Visible = false,
-		Parent = row,
-	})
-	if self._lastDiv then
-		self._lastDiv.Visible = true
-	end
-	self._lastDiv = div
-	table.insert(self._rows, { Frame = row, Name = name or "" })
-	return row
-end
-
-local function rowLabel(row, text, reserve)
-	local l = label(row, text, 14, Theme.Text)
-	l.Position = UDim2.fromOffset(14, 0)
-	l.Size = UDim2.new(1, -(24 + (reserve or 0)), 1, 0)
-	l.TextTruncate = Enum.TextTruncate.AtEnd
-	return l
-end
-
-local function boxButton(parent, w, h)
-	local b = create("TextButton", {
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -12, 0.5, 0),
-		Size = UDim2.fromOffset(w, h),
-		BackgroundColor3 = Theme.Box,
-		Text = "",
-		AutoButtonColor = false,
-		Parent = parent,
-	})
-	corner(b, 5)
-	return b
-end
-
-local function register(lib, flag, save, load)
-	if flag then
-		lib._ctrls[flag] = { Save = save, Load = load }
-	end
-end
-
-local function fire(lib, flag, value, cb)
-	if flag then
-		lib.Flags[flag] = value
-	end
-	if lib.AutoSave and lib.PresetName and not lib._saving then
-		lib._saving = true
-		task.delay(1, function()
-			lib._saving = false
-			if lib.AutoSave and lib.PresetName then
-				lib:SavePreset(lib.PresetName)
-			end
-		end)
-	end
-	if cb then
-		task.spawn(cb, value)
-	end
-end
-
-function Group:Label(text)
-	local r = self:_row(text, 30)
-	local l = label(r, text, 12, Theme.SubText)
-	l.Position = UDim2.fromOffset(12, 0)
-	l.Size = UDim2.new(1, -24, 1, 0)
-	return l
-end
-
-function Group:Button(o)
-	local r = self:_row(o.Name, 41)
-	local b = create("TextButton", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.new(1, -24, 0, 27),
-		BackgroundColor3 = Theme.Box,
-		Text = o.Name or "Button",
-		TextColor3 = Theme.Text,
-		TextSize = 12,
-		Font = FONT,
-		AutoButtonColor = false,
-		Parent = r,
-	})
-	corner(b, 7)
-	b.MouseEnter:Connect(function()
-		tween(b, 0.12, { BackgroundColor3 = Theme.Active })
-	end)
-	b.MouseLeave:Connect(function()
-		tween(b, 0.12, { BackgroundColor3 = Theme.Box })
-	end)
-	b.MouseButton1Click:Connect(function()
-		if o.Callback then
-			task.spawn(o.Callback)
-		end
-	end)
-	return b
-end
-
--- Строка-переход (со стрелкой ">"): { Name, Callback }
-function Group:Submenu(o)
-	local lib = self.Lib
-	local r = self:_row(o.Name)
-	rowLabel(r, o.Name or "Submenu", 30)
-	local ch = icon(r, "chevright", Theme.SubText)
-	placeIcon(ch, 1, 1, -10)
-	local hit = create("TextButton", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		Text = "",
-		AutoButtonColor = false,
-		Parent = r,
-	})
-	hit.MouseEnter:Connect(function()
-		tint(ch, lib.Accent)
-	end)
-	hit.MouseLeave:Connect(function()
-		tint(ch, Theme.SubText)
-	end)
-	hit.MouseButton1Click:Connect(function()
-		if o.Callback then
-			task.spawn(o.Callback)
-		end
-	end)
-	return hit
-end
-
--- цветной свотч (используется и в Toggle:AddColor, и в Group:ColorPicker)
-local function makeColor(lib, row, o, xoff)
-	local sw = create("TextButton", {
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, xoff, 0.5, 0),
-		Size = UDim2.fromOffset(18, 18),
-		Text = "",
-		AutoButtonColor = false,
-		BorderSizePixel = 0,
-		Parent = row,
-	})
-	corner(sw, 6)
-	stroke(sw, WHITE, 1, 0.85)
-
-	local st = { name = o.Name or "Color", a = o.Alpha or 1 }
-	st.h, st.s, st.v = Color3.toHSV(o.Default or Color3.fromRGB(255, 63, 87))
-
-	local api = {}
-	local function color()
-		return Color3.fromHSV(st.h, st.s, st.v)
-	end
-	local function paint()
-		sw.BackgroundColor3 = color()
-		sw.BackgroundTransparency = math.min(1 - st.a, 0.8)
-	end
-	function st.changed()
-		paint()
-		local c = color()
-		if o.Flag then
-			lib.Flags[o.Flag] = { Color = c, Alpha = st.a }
-		end
-		if o.Callback then
-			task.spawn(o.Callback, c, st.a)
-		end
-	end
-	function api:Get()
-		return color(), st.a
-	end
-	function api:Set(c, alpha)
-		st.h, st.s, st.v = Color3.toHSV(c)
-		st.a = alpha or st.a
-		st.changed()
-	end
-	register(lib, o.Flag, function()
-		local c = color()
-		return {
-			t = "c",
-			r = math.floor(c.R * 255 + 0.5),
-			g = math.floor(c.G * 255 + 0.5),
-			b = math.floor(c.B * 255 + 0.5),
-			a = st.a,
-		}
-	end, function(v)
-		api:Set(Color3.fromRGB(v.r, v.g, v.b), v.a)
-	end)
-
-	sw.MouseButton1Click:Connect(function()
-		lib:_openColor(sw, st)
-	end)
-	paint()
-	if o.Flag then
-		lib.Flags[o.Flag] = { Color = color(), Alpha = st.a }
-	end
-	return api
-end
-
--- Toggle: { Name, Flag, Default, Callback }   +  toggle:AddColor({ Name, Default, Alpha, Flag, Callback })
-function Group:Toggle(o)
-	local lib = self.Lib
-	local r = self:_row(o.Name)
-	rowLabel(r, o.Name or "Toggle", 70)
-
-	local pill = create("TextButton", {
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -14, 0.5, 0),
-		Size = UDim2.fromOffset(29, 18), -- toggle 29x18
-		BackgroundColor3 = Theme.Off,
-		Text = "",
-		AutoButtonColor = false,
-		Parent = r,
-	})
-	corner(pill, 9)
-	local knob = create("Frame", {
-		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, 2, 0.5, 0),
-		Size = UDim2.fromOffset(14, 14), -- thumb 14
-		BackgroundColor3 = Theme.OffKnob,
-		BorderSizePixel = 0,
-		Parent = pill,
-	})
-	corner(knob, 7)
-
-	local api = { _n = 0 }
-	local state = o.Default == true
-	local function render(animate)
-		apply(pill, { BackgroundColor3 = state and lib.Accent or Theme.Off }, animate, 0.16)
-		apply(knob, {
-			Position = state and UDim2.new(1, -16, 0.5, 0) or UDim2.new(0, 2, 0.5, 0),
-			BackgroundColor3 = state and WHITE or Theme.OffKnob,
-		}, animate)
-	end
-	lib:_onAccent(function()
-		render(false)
-	end)
-
-	function api:Set(v, silent)
-		state = v and true or false
-		render(true)
-		if silent then
-			if o.Flag then
-				lib.Flags[o.Flag] = state
-			end
-		else
-			fire(lib, o.Flag, state, o.Callback)
-		end
-	end
-	function api:Get()
-		return state
-	end
-	function api:AddColor(co)
-		self._n += 1
-		return makeColor(lib, r, co, -(14 + 29 + 10) - (self._n - 1) * 24)
-	end
-	register(lib, o.Flag, function()
-		return state
-	end, function(v)
-		api:Set(v)
-	end)
-
-	pill.MouseButton1Click:Connect(function()
-		api:Set(not state)
-	end)
-	if o.Flag then
-		lib.Flags[o.Flag] = state
-	end
-	return api
-end
-
--- Slider: { Name, Min, Max, Default, Step, Suffix, Flag, Callback }   (Step=1 → int, 0.1 → float)
-function Group:Slider(o)
-	local lib = self.Lib
-	local min, max = o.Min or 0, o.Max or 100
-	local step = o.Step or 1
-	local dec = decimalsOf(step)
-	local suffix = o.Suffix or ""
-
-	local r = self:_row(o.Name)
-	rowLabel(r, o.Name or "Slider", 190)
-
-	local box = create("TextBox", {
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -12, 0.5, 0),
-		Size = UDim2.fromOffset(46, 22),
-		BackgroundColor3 = Theme.Box,
-		TextColor3 = Theme.SubText,
-		TextSize = 13,
-		Font = FONT,
-		ClearTextOnFocus = false,
-		Text = "",
-		Parent = r,
-	})
-	corner(box, 11) -- value pill
-
-	local hit = create("Frame", {
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -66, 0.5, 0),
-		Size = UDim2.fromOffset(126, 20), -- slider 126
-		BackgroundTransparency = 1,
-		Parent = r,
-	})
-	local bar = create("Frame", {
-		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, 5, 0.5, 0),
-		Size = UDim2.new(1, -10, 0, 4), -- track 4
-		BackgroundColor3 = Theme.Off,
-		BorderSizePixel = 0,
-		Parent = hit,
-	})
-	corner(bar, 2)
-	local fill = create("Frame", {
-		Size = UDim2.fromScale(0, 1),
-		BackgroundColor3 = lib.Accent,
-		BorderSizePixel = 0,
-		Parent = bar,
-	})
-	corner(fill, 2)
-	local knob = create("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0, 0.5),
-		Size = UDim2.fromOffset(10, 10), -- thumb 10 white
-		BackgroundColor3 = WHITE,
-		BorderSizePixel = 0,
-		Parent = bar,
-	})
-	corner(knob, 5)
-	lib:_onAccent(function(c)
-		fill.BackgroundColor3 = c
-	end)
-
-	local value = o.Default or min
-	local api = {}
-	local function snap(v)
-		v = math.clamp(v, min, max)
-		v = math.floor((v - min) / step + 0.5) * step + min
-		return tonumber(string.format("%." .. dec .. "f", math.clamp(v, min, max)))
-	end
-	local function render()
-		local ratio = (max == min) and 0 or (value - min) / (max - min)
-		-- экспоненциальное сглаживание (Exponential Out)
-		tween(fill, 0.25, { Size = UDim2.fromScale(ratio, 1) }, Enum.EasingStyle.Exponential)
-		tween(knob, 0.25, { Position = UDim2.fromScale(ratio, 0.5) }, Enum.EasingStyle.Exponential)
-		box.Text = string.format("%." .. dec .. "f", value) .. suffix
 	end
 
-	function api:Set(v, silent)
-		v = snap(v)
-		local changed = v ~= value
-		value = v
-		render()
-		if silent then
-			if o.Flag then
-				lib.Flags[o.Flag] = value
-			end
-		elseif changed then
-			fire(lib, o.Flag, value, o.Callback)
-		end
-	end
-	function api:Get()
-		return value
-	end
-	register(lib, o.Flag, function()
-		return value
-	end, function(v)
-		api:Set(v)
-	end)
-
-	dragger(hit, function(pos)
-		local ratio = math.clamp((pos.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
-		api:Set(min + ratio * (max - min))
-	end)
-	box.Focused:Connect(function()
-		box.Text = string.format("%." .. dec .. "f", value)
-		box.TextColor3 = Theme.Text
-	end)
-	box.FocusLost:Connect(function()
-		box.TextColor3 = Theme.SubText
-		local n = tonumber(box.Text:match("-?%d+%.?%d*"))
-		if n then
-			api:Set(n)
-		else
-			render()
-		end
-	end)
-
-	value = snap(value)
-	render()
-	if o.Flag then
-		lib.Flags[o.Flag] = value
-	end
-	return api
-end
-
--- Combo: { Name, Items, Default, Multi, Flag, Callback }   Single → строка, Multi → { [item] = true }
-function Group:Combo(o)
-	local lib = self.Lib
-	local items = o.Items or {}
-	local multi = o.Multi == true
-
-	local r = self:_row(o.Name)
-	rowLabel(r, o.Name or "Combo", 146)
-
-	local btn = boxButton(r, 126, 23) -- select 126x23
-	local shown = label(btn, "", 12, Theme.Text)
-	shown.Position = UDim2.fromOffset(10, 0)
-	shown.Size = UDim2.new(1, -30, 1, 0)
-	shown.TextTruncate = Enum.TextTruncate.AtEnd
-	local ch = icon(btn, "chevdown", Theme.SubText)
-	placeIcon(ch, 1, 1, -3)
-
-	local value
-	if multi then
-		value = {}
-		for _, k in ipairs(o.Default or {}) do
-			value[k] = true
-		end
-	else
-		value = o.Default or items[1]
-	end
-
-	local function display()
-		if multi then
-			local t = {}
-			for _, it in ipairs(items) do
-				if value[it] then
-					table.insert(t, tostring(it))
-				end
-			end
-			shown.Text = #t > 0 and table.concat(t, ", ") or "None"
-		else
-			shown.Text = tostring(value)
-		end
-	end
-	display()
-
-	local api = {}
-	function api:Get()
-		return value
-	end
-	function api:Set(v, silent)
-		value = v
-		display()
-		if not silent then
-			fire(lib, o.Flag, value, o.Callback)
-		elseif o.Flag then
-			lib.Flags[o.Flag] = value
-		end
-	end
-	register(lib, o.Flag, function()
-		if multi then
-			local list = {}
-			for _, it in ipairs(items) do
-				if value[it] then
-					table.insert(list, it)
-				end
-			end
-			return { t = "m", v = list }
-		end
-		return value
-	end, function(v)
-		if multi and type(v) == "table" then
-			local set = {}
-			for _, it in ipairs(v.v or {}) do
-				set[it] = true
-			end
-			api:Set(set)
-		elseif not multi then
-			api:Set(v)
-		end
-	end)
-
-	btn.MouseButton1Click:Connect(function()
-		lib:_listPopup(btn, items, function(it)
-			if multi then
-				return value[it] == true
-			end
-			return value == it
-		end, function(it)
-			if multi then
-				local nv = table.clone(value)
-				nv[it] = (not nv[it]) or nil
-				api:Set(nv)
+	local function restoreSnapshot(character, snapshot)
+		removeKinds(character, partsSet(ALL_PARTS))
+		for _, item in ipairs(snapshot.items) do
+			local copy = item:Clone()
+			if copy:IsA("Accoutrement") then
+				addAccessory(character, copy)
 			else
-				api:Set(it)
+				copy.Parent = character
 			end
-		end, multi)
-	end)
-
-	if o.Flag then
-		lib.Flags[o.Flag] = value
-	end
-	return api
-end
-
--- Keybind: { Name, Default = Enum.KeyCode, Flag, Callback(key), OnPress() }
-function Group:Keybind(o)
-	local lib = self.Lib
-	local r = self:_row(o.Name)
-	rowLabel(r, o.Name or "Keybind", 100)
-	local btn = boxButton(r, 84, 24)
-	local txt = label(btn, "", 12, Theme.Text, FONT, Enum.TextXAlignment.Center)
-	txt.Size = UDim2.fromScale(1, 1)
-
-	local key = o.Default
-	local listening = false
-	local api = {}
-	local function show()
-		txt.Text = listening and "..." or (key and key.Name or "None")
-	end
-	show()
-	function api:Get()
-		return key
-	end
-	register(lib, o.Flag, function()
-		return { t = "k", n = key and key.Name or nil }
-	end, function(v)
-		key = v.n and Enum.KeyCode[v.n] or nil
-		show()
-		fire(lib, o.Flag, key, o.Callback)
-	end)
-
-	btn.MouseButton1Click:Connect(function()
-		listening = true
-		show()
-	end)
-	lib:_connect(UserInputService.InputBegan, function(input, gp)
-		if listening then
-			if input.UserInputType == Enum.UserInputType.Keyboard then
-				listening = false
-				key = (input.KeyCode ~= Enum.KeyCode.Escape) and input.KeyCode or nil
-				show()
-				fire(lib, o.Flag, key, o.Callback)
+		end
+		for part, color in pairs(snapshot.colors) do
+			if part.Parent == character then
+				part.Color = color
 			end
+		end
+		local face = getFace(character)
+		if face and snapshot.faceTexture then
+			face.Texture = snapshot.faceTexture
+		end
+	end
+
+	-- Запасной путь для инжекторов: собрать внешний вид из HumanoidDescription через game:GetObjects.
+	local function buildFromDescription(userId)
+		local description = PlayersService:GetHumanoidDescriptionFromUserId(userId)
+		local model = Instance.new("Model")
+		local function load(assetId)
+			if not assetId or assetId == 0 then
+				return
+			end
+			local ok, objects = pcall(function()
+				return game:GetObjects("rbxassetid://" .. tostring(assetId))
+			end)
+			if ok and objects and objects[1] then
+				objects[1].Parent = model
+			end
+		end
+		for _, accessory in ipairs(description:GetAccessories(true)) do
+			load(accessory.AssetId)
+		end
+		load(description.Shirt)
+		load(description.Pants)
+		load(description.GraphicTShirt)
+		load(description.Face)
+		local colors = Instance.new("BodyColors")
+		colors.HeadColor3 = description.HeadColor
+		colors.TorsoColor3 = description.TorsoColor
+		colors.LeftArmColor3 = description.LeftArmColor
+		colors.RightArmColor3 = description.RightArmColor
+		colors.LeftLegColor3 = description.LeftLegColor
+		colors.RightLegColor3 = description.RightLegColor
+		colors.Parent = model
+		return model
+	end
+
+	local function fetchAppearance(userId)
+		local ok, appearance = pcall(function()
+			return PlayersService:GetCharacterAppearanceAsync(userId)
+		end)
+		if ok and appearance then
+			return appearance
+		end
+		local fallbackOk, fallback = pcall(buildFromDescription, userId)
+		if fallbackOk and fallback and #fallback:GetChildren() > 0 then
+			return fallback
+		end
+		return nil
+	end
+
+	-- С кэшем: один и тот же аватар не скачиваем дважды.
+	local function getAppearance(userId)
+		local cached = appearanceCache[userId]
+		if cached then
+			return cached
+		end
+		if cached == false then
+			repeat
+				task.wait(0.2)
+			until appearanceCache[userId] ~= false
+			return appearanceCache[userId]
+		end
+		appearanceCache[userId] = false
+		local model = fetchAppearance(userId)
+		appearanceCache[userId] = model -- nil при ошибке: попробуем снова позже
+		return model
+	end
+
+	local function resolveUser(input)
+		input = trim(input)
+		if input == "" then
+			return nil, nil
+		end
+		local id = tonumber(input)
+		if id then
+			local ok, name = pcall(function()
+				return PlayersService:GetNameFromUserIdAsync(id)
+			end)
+			return id, ok and name or tostring(id)
+		end
+		local ok, result = pcall(function()
+			return PlayersService:GetUserIdFromNameAsync(input)
+		end)
+		if ok and result then
+			return result, input
+		end
+		return nil, nil
+	end
+
+	-- Сообщаем другим пользователям скрипта, какую модель мы надели.
+	local function shareMyModel()
+		if state.share and state.targetId then
+			Library:SetSyncModel({ userId = state.targetId, parts = partsList(state.parts) })
+		else
+			Library:SetSyncModel(nil)
+		end
+	end
+
+	------------------------------ своя модель ------------------------------
+	local function applyToCurrent()
+		local character = localPlayer.Character
+		if not (character and state.appearance) then
+			return false
+		end
+		if not (state.snapshot and state.snapshot.character == character) then
+			state.snapshot = takeSnapshot(character)
+		end
+		applyAppearance(character, state.appearance, state.parts)
+		return true
+	end
+
+	local function applyModel(input)
+		if state.busy then
 			return
 		end
-		if key and not gp and input.KeyCode == key and o.OnPress then
-			task.spawn(o.OnPress)
+		state.busy = true
+		task.spawn(function()
+			local userId, name = resolveUser(input)
+			if not userId then
+				state.busy = false
+				notify("Custom Model", "Player not found. Enter a Roblox username or user ID.")
+				return
+			end
+			notify("Custom Model", "Loading avatar: " .. tostring(name))
+			local appearance = getAppearance(userId)
+			state.busy = false
+			if not appearance then
+				notify("Custom Model", "Could not load this avatar.")
+				return
+			end
+			state.appearance = appearance
+			state.targetId = userId
+			state.targetName = name
+			shareMyModel()
+			if applyToCurrent() then
+				notify("Custom Model", "Model applied: " .. tostring(name))
+			else
+				notify("Custom Model", "No character yet — the model will apply on spawn.")
+			end
+		end)
+	end
+
+	local function resetModel()
+		state.appearance = nil
+		state.targetId = nil
+		state.targetName = nil
+		shareMyModel()
+		local character = localPlayer.Character
+		local snapshot = state.snapshot
+		if not (character and snapshot and snapshot.character == character) then
+			notify("Custom Model", "Nothing to reset.")
+			return
+		end
+		restoreSnapshot(character, snapshot)
+		state.snapshot = nil
+		notify("Custom Model", "Original appearance restored.")
+	end
+
+	-- После респавна игра ставит родной вид — при включённой опции накладываем модель снова.
+	Window:_track(localPlayer.CharacterAdded:Connect(function(character)
+		state.snapshot = nil
+		if state.keepAfterRespawn and state.appearance then
+			character:WaitForChild("Humanoid", 10)
+			task.wait(1) -- даём игре загрузить родную одежду, чтобы снимок был полным
+			if localPlayer.Character == character then
+				applyToCurrent()
+			end
+		end
+	end))
+
+	------------------------ модели других пользователей ------------------------
+	-- Модели приходят с сервера синхронизации (Library.SyncModels) и надеваются у вас локально.
+	local function updateRemote(models)
+		models = models or Library.SyncModels or {}
+
+		-- снимаем модели, которые больше не нужны (пользователь сбросил её, ушёл или вы выключили показ)
+		for id, entry in pairs(remote) do
+			local player = PlayersService:GetPlayerByUserId(id)
+			local character = player and player.Character
+			local wanted = state.showOthers and models[id]
+			if character ~= entry.character then
+				remote[id] = nil -- новый персонаж после респавна: старая модель исчезла вместе с ним
+			elseif not wanted then
+				if entry.snapshot and character and character.Parent then
+					restoreSnapshot(character, entry.snapshot)
+				end
+				remote[id] = nil
+			end
+		end
+
+		if not state.showOthers then
+			return
+		end
+		for id, info in pairs(models) do
+			local player = PlayersService:GetPlayerByUserId(id)
+			local character = player and player.Character
+			if character and character:FindFirstChild("Head") then
+				firstSeen[character] = firstSeen[character] or os.clock()
+				local parts = partsSet(info.parts or ALL_PARTS)
+				local key = tostring(info.userId) .. "|" .. table.concat(partsList(parts), ",")
+				local entry = remote[id]
+				-- ждём пару секунд после появления персонажа, чтобы игра успела надеть родной вид
+				if (not entry or entry.key ~= key) and os.clock() - firstSeen[character] > 2 then
+					local snapshot = entry and entry.snapshot or nil
+					local token = { character = character, key = key, snapshot = snapshot }
+					remote[id] = token
+					task.spawn(function()
+						local appearance = getAppearance(info.userId)
+						if remote[id] ~= token or not appearance or player.Character ~= character then
+							return
+						end
+						token.snapshot = token.snapshot or takeSnapshot(character)
+						applyAppearance(character, appearance, parts)
+					end)
+				end
+			end
+		end
+	end
+
+	Library:OnSyncUsers(function(_, _, models)
+		pcall(updateRemote, models)
+	end)
+	task.spawn(function()
+		while Window.gui.Parent do
+			task.wait(2)
+			pcall(updateRemote)
 		end
 	end)
-	if o.Flag then
-		lib.Flags[o.Flag] = key
+
+	------------------------------ интерфейс ------------------------------
+	local ModelSection = Inventory:AddSection({ Name = "Custom Model", Side = "Left" })
+	local userBox = ModelSection:AddTextbox({
+		Name = "Player",
+		Placeholder = "Username or ID",
+		Width = 160,
+		Callback = function(text, enterPressed)
+			if enterPressed and trim(text) ~= "" then
+				applyModel(text)
+			end
+		end,
+	})
+	ModelSection:AddButton({
+		Name = "Apply Model",
+		Callback = function()
+			applyModel(userBox:Get())
+		end,
+	})
+	ModelSection:AddButton({
+		Name = "Use My Avatar",
+		Callback = function()
+			userBox:Set(localPlayer.Name, true)
+			applyModel(tostring(localPlayer.UserId))
+		end,
+	})
+	ModelSection:AddToggle({
+		Name = "Keep After Respawn",
+		Default = true,
+		Callback = function(value)
+			state.keepAfterRespawn = value
+		end,
+	})
+	ModelSection:AddButton({ Name = "Reset", Danger = true, Callback = resetModel })
+
+	local PartsSection = Inventory:AddSection({ Name = "Copy Parts", Side = "Right" })
+	PartsSection:AddChecklist({
+		Options = ALL_PARTS,
+		Default = ALL_PARTS,
+		Callback = function(selected)
+			state.parts = partsSet(selected)
+			if state.appearance then
+				applyToCurrent()
+				shareMyModel()
+			end
+		end,
+	})
+
+	local SyncSection = Inventory:AddSection({ Name = "Model Sync", Side = "Right" })
+	SyncSection:AddToggle({
+		Name = "Share My Model",
+		Icon = "cast",
+		Default = true,
+		Callback = function(value)
+			state.share = value
+			shareMyModel()
+		end,
+	})
+	SyncSection:AddToggle({
+		Name = "Show Others' Models",
+		Icon = "eye",
+		Default = true,
+		Callback = function(value)
+			state.showOthers = value
+			pcall(updateRemote)
+		end,
+	})
+	SyncSection:AddParagraph({
+		Text = "Works when Synchronization is on in the profile menu. Script users see each other's models; other players see real avatars.",
+	})
+
+	for key, value in pairs({
+		["Custom Model"] = "Своя модель",
+		Player = "Игрок",
+		["Username or ID"] = "Ник или ID",
+		["Apply Model"] = "Применить модель",
+		["Use My Avatar"] = "Мой аватар",
+		["Keep After Respawn"] = "Сохранять после респавна",
+		["Copy Parts"] = "Что копировать",
+		Accessories = "Аксессуары",
+		Clothing = "Одежда",
+		["Body Colors"] = "Цвет тела",
+		Face = "Лицо",
+		["Model Sync"] = "Синхронизация моделей",
+		["Share My Model"] = "Показывать мою модель",
+		["Show Others' Models"] = "Показывать модели других",
+		["Player not found. Enter a Roblox username or user ID."] = "Игрок не найден. Введите ник или ID Roblox.",
+		["Could not load this avatar."] = "Не удалось загрузить этот аватар.",
+		["No character yet — the model will apply on spawn."] = "Персонажа пока нет — модель применится при появлении.",
+		["Nothing to reset."] = "Нечего сбрасывать.",
+		["Original appearance restored."] = "Исходный вид восстановлен.",
+		["Works when Synchronization is on in the profile menu. Script users see each other's models; other players see real avatars."] = "Работает, когда в меню профиля включена Synchronization. Пользователи скрипта видят модели друг друга, остальные игроки — настоящие аватары.",
+	}) do
+		RU[key] = value
 	end
-	return api
 end
 
--- ColorPicker: { Name, Default = Color3, Alpha = 0..1, Flag, Callback(color, alpha) }
-function Group:ColorPicker(o)
-	local lib = self.Lib
-	local r = self:_row(o.Name)
-	rowLabel(r, o.Name or "Color", 50)
-	return makeColor(lib, r, o, -12)
+--------------------------- Miscellaneous ----------------------------
+-- Раскладка по референсу: VIEW / HUD / WORLD ESP / MISCELLANEOUS.
+-- Всплывающие панели собраны из групп-карточек (panel:AddGroup()).
+local Misc = Window:AddTab({ Name = "Miscellaneous", Icon = "gear" })
+
+-- Рабочие экранные виджеты. Их можно перетаскивать мышью.
+local WIDGET_ACCENT = Color3.fromRGB(100, 133, 247)
+local WatermarkWidget = Window:CreateWatermark({
+	Title = "NC",
+	Items = { "Logo", "Latency", "Framerate", "Time", "Name" },
+	Accent = Color3.fromRGB(242, 100, 120),
+})
+local HotkeyWidget = Window:CreateHotkeyList({ Position = UDim2.fromOffset(16, 260) })
+local SpectatorWidget = Window:CreateSpectatorList({ Position = UDim2.fromOffset(16, 440) })
+local EventLog = Window:CreateEventLog({ Position = UDim2.fromOffset(16, 56), Prefix = "[NC]", Visible = false })
+-- Список других пользователей скрипта на сервере (заполняется, когда включена Synchronization).
+local SyncWidget = Window:CreateSyncList({ Position = UDim2.fromOffset(16, 600) })
+SyncWidget:SetDynamic(true)
+
+-------------------------------- VIEW --------------------------------
+local ViewSection = Misc:AddSection({ Name = "View", Side = "Left" })
+
+local viewOptions = ViewSection:AddSubmenu({ Name = "View Options" })
+local viewFov = viewOptions:AddGroup()
+viewFov:AddToggle({ Name = "Override FOV", Default = true })
+viewFov:AddSlider({ Name = "Value", Min = 60, Max = 130, Default = 100, Suffix = "°" })
+local viewAspect = viewOptions:AddGroup()
+viewAspect:AddToggle({ Name = "Override Aspect Ratio", Default = true })
+viewAspect:AddDropdown({ Name = "Scaling", Options = { "Vertical", "Horizontal" }, Default = "Horizontal" })
+viewAspect:AddSlider({ Name = "Value", Min = 50, Max = 200, Default = 80, Suffix = "%" })
+viewOptions:AddGroup():AddToggle({ Name = "Disable Landing Bob", Default = false })
+
+local scopeOptions = ViewSection:AddSubmenu({ Name = "Scope Options" })
+local scopeFov = scopeOptions:AddGroup()
+scopeFov:AddToggle({ Name = "Override FOV", Default = true })
+scopeFov:AddSlider({ Name = "Scale (x1)", Min = 0, Max = 100, Default = 100, Suffix = "%" })
+scopeFov:AddSlider({ Name = "Scale (x2)", Min = 0, Max = 100, Default = 100, Suffix = "%" })
+local scopeOther = scopeOptions:AddGroup()
+scopeOther:AddToggle({ Name = "Instant Scope", Default = false })
+scopeOther:AddToggle({ Name = "Show Viewmodel", Default = true })
+
+local viewmodel = ViewSection:AddSubmenu({ Name = "Viewmodel Options" })
+local vmFov = viewmodel:AddGroup()
+vmFov:AddToggle({ Name = "Override FOV", Default = false })
+vmFov:AddSlider({ Name = "Value", Min = 40, Max = 120, Default = 68 })
+local vmPosition = viewmodel:AddGroup()
+vmPosition:AddToggle({ Name = "Override Position", Default = false })
+vmPosition:AddSlider({ Name = "X", Min = -10, Max = 10, Default = 1, Decimals = 1 })
+vmPosition:AddSlider({ Name = "Y", Min = -10, Max = 10, Default = 0, Decimals = 1 })
+vmPosition:AddSlider({ Name = "Z", Min = -10, Max = 10, Default = -1, Decimals = 1 })
+local vmAngles = viewmodel:AddGroup()
+vmAngles:AddToggle({ Name = "Override Angles", Default = false })
+vmAngles:AddSlider({ Name = "Pitch", Min = -90, Max = 90, Default = 0, Suffix = "°" })
+vmAngles:AddSlider({ Name = "Yaw", Min = -90, Max = 90, Default = 0, Suffix = "°" })
+vmAngles:AddSlider({ Name = "Roll", Min = -90, Max = 90, Default = 0, Suffix = "°" })
+local vmModifiers = viewmodel:AddGroup()
+vmModifiers:AddToggle({ Name = "Override Modifiers", Default = false })
+vmModifiers:AddSlider({ Name = "Bobbing", Min = 0, Max = 100, Default = 100, Suffix = "%" })
+vmModifiers:AddSlider({ Name = "Angles Sway", Min = 0, Max = 100, Default = 100, Suffix = "%" })
+vmModifiers:AddSlider({ Name = "Velocity Sway", Min = 0, Max = 100, Default = 100, Suffix = "%" })
+vmModifiers:AddSlider({ Name = "In Air Offset", Min = 0, Max = 100, Default = 100, Suffix = "%" })
+
+local perspective = ViewSection:AddSubmenu({ Name = "Perspective Options" })
+local perspectiveMain = perspective:AddGroup()
+perspectiveMain:AddToggle({ Name = "Force Third Person", Default = false }):AddKeybind({ Default = Enum.KeyCode.V })
+perspectiveMain:AddDropdown({
+	Name = "Disablers",
+	Multi = true,
+	Options = { "Close To Wall", "Holding Grenade" },
+	Default = { "Close To Wall" },
+})
+perspectiveMain:AddSlider({ Name = "Distance", Min = 30, Max = 200, Default = 70 })
+perspective:AddGroup():AddDropdown({
+	Name = "Disable Overhead",
+	Multi = true,
+	Options = { "Self", "Teammates", "Enemies" },
+})
+
+ViewSection:AddDropdown({
+	Name = "Unlock Spectating",
+	Multi = true,
+	Options = { "Free Camera", "Any Player", "Enemies" },
+	Width = 130,
+})
+ViewSection:AddDropdown({
+	Name = "Visual Recoil",
+	Multi = true,
+	Options = { "No Shake", "No Recoil", "No Viewmodel Recoil" },
+	Width = 130,
+})
+
+-------------------------------- HUD ---------------------------------
+local Hud = Misc:AddSection({ Name = "HUD", Side = "Right" })
+Hud:AddToggle({ Name = "Radar", Default = false })
+Hud:AddToggle({ Name = "Preserve Killfeed", Default = false })
+Hud:AddToggle({ Name = "Inaccuracy Overlay", Default = false }):AddColorpicker({ Default = Color3.fromRGB(120, 122, 136) })
+Hud:AddDropdown({ Name = "Scope Overlay", Options = { "Default", "Lines", "None" }, Default = "Default", Width = 130 })
+
+local scoreboard = Hud:AddSubmenu({ Name = "Scoreboard" })
+local scoreboardMain = scoreboard:AddGroup()
+scoreboardMain:AddToggle({ Name = "Reveal Money", Default = true })
+scoreboardMain:AddDropdown({ Name = "Equipment", Options = { "Disabled", "Enemy Only", "Everyone" }, Default = "Enemy Only" })
+scoreboard:AddGroup():AddChecklist({
+	Options = { "Primary", "Secondary", "Knife", "Taser", "Grenades", "Bomb", "Defuse Kit", "Armor", "Other" },
+	Default = { "Primary", "Secondary", "Grenades", "Bomb", "Defuse Kit" },
+})
+
+local crosshairs = Hud:AddSubmenu({ Name = "Crosshairs" })
+local crosshairsGroup = crosshairs:AddGroup()
+crosshairsGroup:AddToggle({ Name = "Default", Default = true })
+crosshairsGroup:AddToggle({ Name = "While Scoped", Default = false })
+crosshairsGroup:AddToggle({ Name = "Penetration", Default = false }):AddColorpicker({ Default = Color3.fromRGB(196, 84, 168) })
+
+------------------------------ WORLD ESP -----------------------------
+local WorldEsp = Misc:AddSection({ Name = "World ESP", Side = "Left" })
+
+local bomb = WorldEsp:AddSubmenu({ Name = "Bomb" })
+local bombEffects = bomb:AddGroup()
+bombEffects:AddToggle({ Name = "Colorize Effects", Default = true }):AddColorpicker({ Default = Color3.fromRGB(198, 83, 161) })
+bombEffects:AddToggle({ Name = "Bomb Indicator", Default = true }):AddColorpicker({ Default = Color3.fromRGB(223, 99, 139) })
+bombEffects:AddToggle({ Name = "Defuse Indicator", Default = true }):AddColorpicker({ Default = Color3.fromRGB(214, 82, 108) })
+bombEffects:AddToggle({ Name = "Defuser", Default = true }):AddColorpicker({ Default = Color3.fromRGB(222, 119, 154) })
+local bombEsp = bomb:AddGroup()
+bombEsp:AddToggle({ Name = "Enabled", Default = true }):AddColorpicker({ Default = Color3.fromRGB(158, 229, 161) })
+bombEsp:AddLabel("Bomb Defused"):AddColorpicker({ Default = Color3.fromRGB(217, 231, 250) })
+bombEsp:AddChips({
+	Options = { "Icon", "Text", "Progress Bar", "Time Remaining", "Damage", "Distance", "Glow" },
+	Default = { "Icon", "Progress Bar", "Time Remaining" },
+})
+
+local weapons = WorldEsp:AddSubmenu({ Name = "Weapons" })
+local weaponsGroup = weapons:AddGroup()
+weaponsGroup:AddToggle({ Name = "Colorize Effects", Default = true }):AddColorpicker({ Default = Color3.fromRGB(200, 88, 173) })
+weaponsGroup:AddToggle({ Name = "Enabled", Default = true }):AddColorpicker({ Default = WHITE })
+weapons:AddGroup():AddChips({ Options = { "Icon", "Text", "Ammo", "Distance", "Glow" }, Default = { "Icon", "Ammo" } })
+
+local hostages = WorldEsp:AddSubmenu({ Name = "Hostages" })
+hostages:AddGroup():AddToggle({ Name = "Rescue Indicator", Default = true }):AddColorpicker({ Default = Color3.fromRGB(190, 215, 243) })
+local hostagesEsp = hostages:AddGroup()
+hostagesEsp:AddToggle({ Name = "Enabled", Default = true }):AddColorpicker({ Default = Color3.fromRGB(241, 108, 157) })
+hostagesEsp:AddChips({ Options = { "Bounding Box", "Progress Bar", "Text", "Distance", "Glow" }, Default = { "Text" } })
+
+local grenades = WorldEsp:AddSubmenu({ Name = "Grenades" })
+local grenadesFx = grenades:AddGroup()
+grenadesFx:AddToggle({ Name = "Smoke Radius", Default = true }):AddColorpicker({ Default = Color3.fromRGB(91, 149, 237) })
+grenadesFx:AddToggle({ Name = "Molotov Radius", Default = true }):AddColorpicker({ Default = Color3.fromRGB(203, 170, 107) })
+grenadesFx:AddToggle({ Name = "Colorize Smoke", Default = false }):AddColorpicker({ Default = Color3.fromRGB(167, 170, 121) })
+grenadesFx:AddToggle({ Name = "Colorize Molotov", Default = false }):AddColorpicker({ Default = Color3.fromRGB(228, 168, 52) })
+grenadesFx:AddToggle({ Name = "Colorize Explosion", Default = false }):AddColorpicker({ Default = Color3.fromRGB(108, 152, 237) })
+local grenadesEsp = grenades:AddGroup()
+grenadesEsp:AddToggle({ Name = "Enabled", Default = true }):AddColorpicker({ Default = WHITE })
+grenadesEsp:AddChips({
+	Options = { "Icon", "Text", "Progress Bar", "Time Remaining", "Distance", "Glow", "Trajectory" },
+	Default = { "Icon", "Time Remaining" },
+})
+
+local trajectory = WorldEsp:AddToggle({ Name = "Grenade Trajectory", Default = false })
+local trajectoryGroup = trajectory:AddSettings("Grenade Trajectory"):AddGroup()
+trajectoryGroup:AddLabel("Color"):AddColorpicker({ Default = Color3.fromRGB(239, 70, 123) })
+trajectoryGroup:AddSlider({ Name = "Exponent", Min = 0, Max = 100, Default = 45 })
+trajectoryGroup:AddToggle({ Name = "Thrown Grenades", Default = true })
+trajectoryGroup:AddToggle({ Name = "Pin Pulled Only", Default = true })
+WorldEsp:AddToggle({ Name = "Grenade Proximity Warnings", Default = false })
+
+---------------------------- MISCELLANEOUS ---------------------------
+local MiscSection = Misc:AddSection({ Name = "Miscellaneous", Side = "Right" })
+
+-- Windows: рабочие виджеты + какие функции показывать в списке Hotkeys.
+local windowsPanel = MiscSection:AddSubmenu({ Name = "Windows" })
+local windowsMain = windowsPanel:AddGroup()
+
+-- Свои настройки вида для каждого списка: Hotkeys и Spectators меняются независимо.
+local function addListSettings(toggle, widget, title)
+	local settings = toggle:AddSettings(title):AddGroup()
+	settings:AddDropdown({
+		Name = "Style",
+		Options = { "Default", "Inverted", "Compact" },
+		Default = "Default",
+		Callback = function(style)
+			widget:SetStyle(style)
+		end,
+	})
+	settings:AddToggle({
+		Name = "Right-Aligned",
+		Default = false,
+		Callback = function(value)
+			widget:SetRightAligned(value)
+		end,
+	})
+	settings:AddToggle({
+		Name = "Dynamic Header",
+		Default = true,
+		Callback = function(value)
+			widget:SetDynamic(value)
+		end,
+	})
+	return settings
 end
 
-return Library
+local watermark = windowsMain:AddToggle({
+	Name = "Watermark",
+	Icon = "watermark",
+	Default = true,
+	Callback = function(value)
+		WatermarkWidget:SetVisible(value)
+	end,
+})
+local watermarkSettings = watermark:AddSettings("Watermark"):AddGroup()
+watermarkSettings:AddDropdown({
+	Name = "Items",
+	Multi = true,
+	Options = { "Logo", "Latency", "Framerate", "Speed", "Memory", "KD Ratio", "Players", "Time", "Name" },
+	Default = { "Logo", "Latency", "Framerate", "Time", "Name" },
+	Callback = function(items)
+		WatermarkWidget:SetItems(items)
+	end,
+})
+watermarkSettings:AddLabel("Additional Colors"):AddColorpicker({
+	Default = Color3.fromRGB(242, 100, 120),
+	Callback = function(color)
+		WatermarkWidget:SetAccent(color)
+	end,
+})
+watermarkSettings:AddToggle({
+	Name = "Display Avatar",
+	Default = true,
+	Callback = function(value)
+		WatermarkWidget:SetAvatar(value)
+	end,
+})
+
+local hotkeys = windowsMain:AddToggle({
+	Name = "Hotkeys",
+	Icon = "list",
+	Default = true,
+	Callback = function(value)
+		HotkeyWidget:SetVisible(value)
+	end,
+})
+addListSettings(hotkeys, HotkeyWidget, "Hotkeys"):AddToggle({
+	Name = "Show Inactive Binds",
+	Default = false,
+	Callback = function(value)
+		HotkeyWidget:SetShowAll(value)
+	end,
+})
+
+local spectators = windowsMain:AddToggle({
+	Name = "Spectators",
+	Icon = "eye",
+	Default = true,
+	Callback = function(value)
+		SpectatorWidget:SetVisible(value)
+	end,
+})
+addListSettings(spectators, SpectatorWidget, "Spectators")
+
+windowsMain:AddToggle({
+	Name = "Log Events",
+	Icon = "terminal",
+	Default = false,
+	Callback = function(value)
+		EventLog:SetVisible(value)
+	end,
+})
+-- Synchronization включается в меню профиля; здесь — как показывать найденных пользователей.
+local scriptUsers = windowsMain:AddToggle({
+	Name = "Script Users",
+	Icon = "cast",
+	Default = true,
+	Callback = function(value)
+		SyncWidget:SetVisible(value)
+	end,
+})
+local scriptUsersSettings = addListSettings(scriptUsers, SyncWidget, "Script Users")
+scriptUsersSettings:AddToggle({
+	Name = "Overhead Tags",
+	Default = true,
+	Callback = function(value)
+		Library.SyncTagsVisible = value
+	end,
+})
+-- значок NC рядом с именем в списке игроков (Tab)
+scriptUsersSettings:AddToggle({
+	Name = "Player List Tags",
+	Default = true,
+	Callback = function(value)
+		Library.PlayerListTagsVisible = value
+		if Window._refreshPlayerListTags then
+			pcall(Window._refreshPlayerListTags)
+		end
+	end,
+})
+Library:OnSyncUsers(function(_, joined)
+	for _, id in ipairs(joined) do
+		local player = game:GetService("Players"):GetPlayerByUserId(id)
+		if player then
+			EventLog:Push((Library.Settings.SafeMode and Library:Translate("Hidden") or player.DisplayName) .. " " .. Library:Translate("also uses this script"))
+		end
+	end
+end)
+
+local windowsBinds = windowsPanel:AddGroup()
+windowsBinds:AddLabel("Color", { Icon = "palette" }):AddColorpicker({
+	Default = WIDGET_ACCENT,
+	Callback = function(color)
+		HotkeyWidget:SetAccent(color)
+		SpectatorWidget:SetAccent(color)
+	end,
+})
+-- Каждая строка решает, показывать ли эту функцию в списке Hotkeys.
+for _, item in ipairs({
+	{ "Hit Chance Override", "crosshair" },
+	{ "Min Damage Override", "keyboard", true },
+	{ "Double Tap", "bullets", true },
+	{ "Duck Peek Assist", "duck" },
+	{ "Freestanding", "freestand" },
+	{ "Slowdown", "triangle" },
+	{ "Jump Bug", "jump" },
+}) do
+	local name, iconName, hasSettings = item[1], item[2], item[3]
+	local row = windowsBinds:AddToggle({
+		Name = name,
+		Icon = iconName,
+		Default = true,
+		Callback = function(value)
+			HotkeyWidget:SetHidden(name, not value)
+		end,
+	})
+	if hasSettings then
+		row:AddSettings(name):AddGroup():AddToggle({ Name = "Show Value", Default = true })
+	end
+end
+HotkeyWidget:SetAccent(WIDGET_ACCENT)
+SpectatorWidget:SetAccent(WIDGET_ACCENT)
+HotkeyWidget:SetDynamic(true)
+SpectatorWidget:SetDynamic(true)
+
+local removals = MiscSection:AddSubmenu({ Name = "Removals" })
+removals:AddGroup():AddChecklist({
+	Options = {
+		"Flashbang Effect",
+		"Smoke Rendering",
+		"First Person Legs",
+		"Carried Hostage",
+		"Post Processing",
+		"Team Intro",
+		"Water Effects",
+		"Blood Effects",
+		"Decals",
+	},
+	Default = { "Flashbang Effect" },
+})
+local ragdolls = removals:AddGroup()
+ragdolls:AddDropdown({ Name = "Ragdolls", Options = { "Default", "Disabled", "Frozen" }, Default = "Default" })
+ragdolls:AddSlider({ Name = "Gravity", Min = 0, Max = 100, Default = 60, Suffix = "%" })
+ragdolls:AddSlider({ Name = "Friction", Min = 0, Max = 100, Default = 60, Suffix = "%" })
+
+local ambience = MiscSection:AddSubmenu({ Name = "Ambience" })
+local night = ambience:AddGroup()
+night:AddToggle({ Name = "Night Mode", Default = false })
+night:AddSlider({ Name = "Brightness", Min = 0, Max = 100, Default = 40, Suffix = "%" })
+local fog = ambience:AddGroup()
+fog:AddToggle({ Name = "Fog", Default = false }):AddColorpicker({ Default = Color3.fromRGB(150, 160, 190) })
+fog:AddSlider({ Name = "Fog Distance", Min = 0, Max = 1000, Default = 400 })
+local sky = ambience:AddGroup()
+sky:AddDropdown({ Name = "Skybox", Options = { "Default", "Night", "Space", "Sunset" }, Default = "Default" })
+sky:AddLabel("Ambient Color"):AddColorpicker({ Default = Color3.fromRGB(120, 120, 140) })
+
+local hitMarker = MiscSection:AddSubmenu({ Name = "Hit Marker" })
+for _, kind in ipairs({ "2D Marker", "3D Marker", "Damage Marker" }) do
+	local group = hitMarker:AddGroup()
+	group:AddToggle({ Name = kind, Default = kind ~= "3D Marker" }):AddColorpicker({ Default = WHITE })
+	group:AddSlider({ Name = "Duration", Min = 0, Max = 5, Default = 1, Decimals = 1, Suffix = "s" })
+end
+
+local bulletTracers = MiscSection:AddSubmenu({ Name = "Bullet Tracers" })
+for _, who in ipairs({ "Enemies", "Teammates", "Local Player" }) do
+	local group = bulletTracers:AddGroup()
+	group:AddToggle({ Name = who, Default = who ~= "Teammates" }):AddColorpicker({ Default = WHITE })
+	group:AddSlider({ Name = "Duration", Min = 0, Max = 10, Default = 3, Decimals = 1, Suffix = "s" })
+end
+
+MiscSection:AddToggle({ Name = "Bullet Impacts", Default = false }):AddColorpicker({ Default = Color3.fromRGB(196, 110, 220) })
+
+------------------------------ Settings ------------------------------
+-- То, что раньше было в Miscellaneous: движение, меню, конфиги.
+local SettingsTab = Window:AddTab({ Name = "Settings", Icon = "sliders" })
+
+local Movement = SettingsTab:AddSection({ Name = "Movement", Side = "Left" })
+Movement:AddToggle({ Name = "Auto Jump", Default = true })
+Movement:AddToggle({ Name = "Jump Bug", Default = false }):AddKeybind({ Default = Enum.KeyCode.C })
+Movement:AddToggle({ Name = "Slowdown", Default = false }):AddKeybind({ Default = Enum.KeyCode.LeftShift, Mode = "Hold" })
+local strafe = Movement:AddToggle({ Name = "Auto Strafe", Default = false })
+strafe:AddSettings("Auto Strafe"):AddGroup():AddSlider({ Name = "Smoothing", Min = 0, Max = 100, Default = 60, Suffix = "%" })
+Movement:AddSlider({ Name = "Speed Limit", Min = 0, Max = 300, Default = 250 })
+
+local MenuSection = SettingsTab:AddSection({ Name = "Menu", Side = "Right" })
+MenuSection:AddKeybind({
+	Name = "Menu Key",
+	Default = Window.ToggleKey,
+	Changed = function(key)
+		if key then
+			Window.ToggleKey = key
+		end
+	end,
+})
+-- Язык, масштаб, стиль и т.д. — в меню профиля (клик по карточке игрока внизу сайдбара).
+MenuSection:AddToggle({
+	Name = "Show Notifications",
+	Default = true,
+	Callback = function(value)
+		Library.NotificationsEnabled = value
+	end,
+})
+MenuSection:AddButton({
+	Name = "Test Notification",
+	Callback = function()
+		Window:Notify({ Title = "Nocturne", Text = "This is a notification preview.", Duration = 3 })
+	end,
+})
+MenuSection:AddButton({
+	Name = "Unload Menu",
+	Danger = true,
+	Callback = function()
+		Library:Unload()
+	end,
+})
+
+local Config = SettingsTab:AddSection({ Name = "Config", Side = "Right" })
+-- Конфиги: всё состояние меню в файл nocturne_<профиль>.json (нужен writefile/readfile инжектора).
+local profileDropdown = Config:AddDropdown({
+	Name = "Profile",
+	Options = { "Default", "Legit", "Rage", "Custom" },
+	Default = "Default",
+	Width = 120,
+})
+Config:AddButton({
+	Name = "Save",
+	Callback = function()
+		local name = profileDropdown:Get()
+		local ok, err = Library:SaveConfig(name)
+		Window:Notify({
+			Title = "Config",
+			Text = ok and ("Saved: " .. name) or ("Save failed: " .. tostring(err)),
+			Duration = 3,
+		})
+	end,
+})
+Config:AddButton({
+	Name = "Load",
+	Callback = function()
+		local name = profileDropdown:Get()
+		local ok, err = Library:LoadConfig(name)
+		profileDropdown:Set(name, true) -- в файле мог сохраниться другой профиль
+		Window:Notify({
+			Title = "Config",
+			Text = ok and ("Loaded: " .. name) or ("Load failed: " .. tostring(err)),
+			Duration = 3,
+		})
+	end,
+})
+Config:AddButton({
+	Name = "Reset",
+	Danger = true,
+	Callback = function()
+		local name = profileDropdown:Get()
+		Library:ResetConfig()
+		profileDropdown:Set(name, true)
+		Window:Notify({ Title = "Config", Text = "All settings reset to defaults.", Duration = 3 })
+	end,
+})
+
+-- Переводы для новых подписей.
+for key, value in pairs({
+	Settings = "Настройки",
+	Models = "Модели",
+	["Enemy Chams"] = "Чамсы врагов",
+	["Team Chams"] = "Чамсы союзников",
+	["Local Chams"] = "Свои чамсы",
+	["Weapon Chams"] = "Чамсы оружия",
+	["Hand Chams"] = "Чамсы рук",
+	["Hidden Color"] = "Цвет за стеной",
+	Material = "Материал",
+	Transparency = "Прозрачность",
+	HUD = "Интерфейс",
+	["World ESP"] = "ESP мира",
+	["Override FOV"] = "Свой FOV",
+	Value = "Значение",
+	["Override Aspect Ratio"] = "Своё соотношение сторон",
+	Scaling = "Масштабирование",
+	["Disable Landing Bob"] = "Без тряски при приземлении",
+	["Scale (x1)"] = "Масштаб (x1)",
+	["Scale (x2)"] = "Масштаб (x2)",
+	["Instant Scope"] = "Мгновенный прицел",
+	["Show Viewmodel"] = "Показывать руки",
+	["Override Position"] = "Своя позиция",
+	["Override Angles"] = "Свои углы",
+	["Override Modifiers"] = "Свои модификаторы",
+	Bobbing = "Покачивание",
+	["Angles Sway"] = "Раскачивание",
+	["Velocity Sway"] = "Инерция",
+	["In Air Offset"] = "Смещение в прыжке",
+	["Force Third Person"] = "Вид от третьего лица",
+	Disablers = "Отключать",
+	Distance = "Дистанция",
+	["Disable Overhead"] = "Скрыть над головой",
+	["Unlock Spectating"] = "Свободное наблюдение",
+	["Visual Recoil"] = "Визуальная отдача",
+	Radar = "Радар",
+	["Preserve Killfeed"] = "Сохранять килфид",
+	["Inaccuracy Overlay"] = "Индикатор разброса",
+	["Scope Overlay"] = "Оверлей прицела",
+	["Reveal Money"] = "Показывать деньги",
+	Equipment = "Снаряжение",
+	Default = "По умолчанию",
+	["While Scoped"] = "В прицеле",
+	Penetration = "Пробитие",
+	["Colorize Effects"] = "Цвет эффектов",
+	["Bomb Indicator"] = "Индикатор бомбы",
+	["Defuse Indicator"] = "Индикатор разминирования",
+	Defuser = "Дефузер",
+	["Bomb Defused"] = "Бомба обезврежена",
+	Weapons = "Оружие",
+	["Rescue Indicator"] = "Индикатор спасения",
+	["Smoke Radius"] = "Радиус дыма",
+	["Molotov Radius"] = "Радиус молотова",
+	["Colorize Smoke"] = "Цвет дыма",
+	["Colorize Molotov"] = "Цвет молотова",
+	["Colorize Explosion"] = "Цвет взрыва",
+	Exponent = "Экспонента",
+	["Thrown Grenades"] = "Брошенные гранаты",
+	["Pin Pulled Only"] = "Только с выдернутой чекой",
+	["Grenade Proximity Warnings"] = "Предупреждение о гранатах",
+	["Log Events"] = "Журнал событий",
+	["Hit Chance Override"] = "Свой шанс попадания",
+	["Min Damage Override"] = "Свой мин. урон",
+	["Show Value"] = "Показывать значение",
+	Ragdolls = "Рэгдоллы",
+	Gravity = "Гравитация",
+	Friction = "Трение",
+	Ambience = "Атмосфера",
+	["Night Mode"] = "Ночной режим",
+	Brightness = "Яркость",
+	Fog = "Туман",
+	["Fog Distance"] = "Дальность тумана",
+	Skybox = "Небо",
+	["Ambient Color"] = "Цвет окружения",
+	["Bullet Tracers"] = "Трассеры",
+	["Bullet Impacts"] = "Следы попаданий",
+	["2D Marker"] = "2D маркер",
+	["3D Marker"] = "3D маркер",
+	["Damage Marker"] = "Маркер урона",
+	Primary = "Основное",
+	Secondary = "Пистолет",
+	Knife = "Нож",
+	Taser = "Тейзер",
+	Armor = "Броня",
+	["Flashbang Effect"] = "Эффект флешки",
+	["Smoke Rendering"] = "Отрисовка дыма",
+	["First Person Legs"] = "Ноги от первого лица",
+	["Carried Hostage"] = "Переносимый заложник",
+	["Post Processing"] = "Постобработка",
+	["Team Intro"] = "Заставка команды",
+	["Water Effects"] = "Эффекты воды",
+	["Blood Effects"] = "Эффекты крови",
+	Decals = "Декали",
+}) do
+	RU[key] = value
+end
+-- переприменить язык: подписи, созданные до добавления ключей, тоже переведутся
+Library:SetLanguage(Library.Settings.Language)
+
+for key, value in pairs({
+	Config = "Конфиг",
+	["All settings reset to defaults."] = "Все настройки сброшены.",
+	["Overhead Tags"] = "Значки над головой",
+	["Player List Tags"] = "Значки в списке игроков",
+}) do
+	RU[key] = value
+end
+
+Window:Notify({
+	Title = "Nocturne",
+	Text = "Menu loaded. Press " .. Window.ToggleKey.Name .. " to hide or show it.",
+	Duration = 5,
+})
