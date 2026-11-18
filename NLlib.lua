@@ -18,7 +18,7 @@ local Stats = game:GetService("Stats")
 local LocalPlayer = Players.LocalPlayer
 
 local Library = {
-	Version = "1.11.0",
+	Version = "1.12.0",
 	Flags = {},
 	Windows = {},
 	Keybinds = {},
@@ -4060,7 +4060,7 @@ end
 
 ----------------------------------------------------------------------
 -- Synchronization: видеть других пользователей этого скрипта на том же сервере.
--- Каждые 15 с скрипт отправляет на ваш сервер (server/presence-server.js)
+-- Каждые 3–10 с скрипт отправляет на ваш сервер (server/presence-server.js)
 -- свой UserId и JobId сервера, а в ответ получает UserId остальных пользователей
 -- скрипта на этом сервере. Им рисуется значок над головой и список «Script Users».
 -- Нужна функция HTTP-запросов инжектора (request / http_request / syn.request).
@@ -4071,7 +4071,10 @@ Library.SyncUsers = {} -- [UserId] = true
 Library.SyncTagsVisible = true
 Library._syncListeners = {}
 
-local SYNC_INTERVAL = 15
+-- Как часто отмечаться на сервере: чаще, когда рядом есть другие пользователи скрипта,
+-- чтобы смена их моделей доходила быстро; реже, когда вы один (меньше нагрузки на сервер).
+local SYNC_INTERVAL_ACTIVE = 3
+local SYNC_INTERVAL_IDLE = 10
 
 local function httpRequester()
 	local ok, requester = pcall(function()
@@ -4205,7 +4208,7 @@ function Library:SetSync(enabled)
 				reportedError = err
 				self:Notify({ Title = "Synchronization", Text = translate("Not connected") .. ": " .. tostring(err), Duration = 5 })
 			end
-			task.wait(SYNC_INTERVAL)
+			task.wait(next(self.SyncUsers) ~= nil and SYNC_INTERVAL_ACTIVE or SYNC_INTERVAL_IDLE)
 		end
 		self._syncLoop = false
 	end)
