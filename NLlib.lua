@@ -936,10 +936,11 @@ function Container:AddSubmenu(opts)
 			window:_closePopup(panel.frame)
 			return
 		end
-		tween(arrow, 0.15, { TextColor3 = Theme.Accent })
-		window:_openPopup(panel.frame, row, "side", function()
-			tween(arrow, 0.15, { TextColor3 = Theme.Text })
-		end)
+		tween(arrow, 0.15, { TextColor3 = Theme.Accent, Rotation = 90 })
+		panel.frame.Size = panel.fullSize
+		window:_openPopup(panel.frame, row, "attach", function()
+			tween(arrow, 0.15, { TextColor3 = Theme.Text, Rotation = 0 })
+		end, true)
 	end)
 
 	function panel:SetValue(text)
@@ -1459,9 +1460,12 @@ function Window:_place(frame, anchor, mode, frameSize)
 		end
 		y = anchorPos.Y - 12
 	elseif mode == "attach" then
-		-- под строкой, к которой относится кнопка: anchor -> Controls -> строка
-		local row = anchor.Parent and anchor.Parent.Parent
-		if not (row and row:IsA("GuiObject")) then
+		-- под строкой, к которой относится anchor (строка лежит прямо в контейнере "Items")
+		local row = anchor
+		while row.Parent and row.Parent.Name ~= "Items" do
+			row = row.Parent
+		end
+		if not row.Parent then
 			row = anchor
 		end
 		local rowPos, rowSize = row.AbsolutePosition, row.AbsoluteSize
