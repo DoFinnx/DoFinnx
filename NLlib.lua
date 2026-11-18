@@ -18,7 +18,7 @@ local Stats = game:GetService("Stats")
 local LocalPlayer = Players.LocalPlayer
 
 local Library = {
-	Version = "1.6.0",
+	Version = "1.7.0",
 	Flags = {},
 	Windows = {},
 	Keybinds = {},
@@ -1544,6 +1544,63 @@ function Container:AddChips(opts)
 	return chips
 end
 
+-- Поле ввода текста. Callback(text, enterPressed) вызывается при потере фокуса.
+function Container:AddTextbox(opts)
+	opts = opts or {}
+	local name = opts.Name or "Textbox"
+	local _, _, acc = self:_row(name, nil, nil, opts.Icon)
+	local textbox = { Type = "Textbox", Name = name, Value = opts.Default or "" }
+
+	local box = create("TextBox", {
+		BackgroundColor3 = Theme.Field,
+		Size = UDim2.fromOffset(opts.Width or 150, 26),
+		Font = FONT,
+		TextSize = TEXT_SM,
+		TextColor3 = Theme.TextStrong,
+		PlaceholderText = opts.Placeholder or "",
+		PlaceholderColor3 = Theme.Muted,
+		Text = textbox.Value,
+		ClearTextOnFocus = false,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		LayoutOrder = 1000,
+		Parent = acc,
+	}, { corner(6), padding(10, 0, 10, 0) })
+	local boxStroke = stroke(Theme.Accent, 1, 1)
+	boxStroke.Parent = box
+	if opts.Placeholder then
+		tr(box, opts.Placeholder, false, "PlaceholderText")
+	end
+
+	box.Focused:Connect(function()
+		tween(boxStroke, 0.12, { Transparency = 0.4 })
+		tween(box, 0.12, { BackgroundColor3 = Theme.FieldHover })
+	end)
+	box.FocusLost:Connect(function(enterPressed)
+		tween(boxStroke, 0.12, { Transparency = 1 })
+		tween(box, 0.12, { BackgroundColor3 = Theme.Field })
+		textbox.Value = box.Text
+		setFlag(opts.Flag, box.Text)
+		safeCall(opts.Callback, box.Text, enterPressed)
+	end)
+
+	function textbox:Set(text, silent)
+		box.Text = tostring(text or "")
+		self.Value = box.Text
+		setFlag(opts.Flag, self.Value)
+		if not silent then
+			safeCall(opts.Callback, self.Value, false)
+		end
+	end
+
+	function textbox:Get()
+		return box.Text
+	end
+
+	setFlag(opts.Flag, textbox.Value)
+	return textbox
+end
+
 function Container:AddButton(opts)
 	opts = opts or {}
 	local name = opts.Name or "Button"
@@ -1686,6 +1743,7 @@ function Container:AddParagraph(opts)
 		LayoutOrder = 2,
 		Parent = frame,
 	})
+	tr(body, opts.Text)
 	local paragraph = { Type = "Paragraph" }
 	function paragraph:Set(text)
 		body.Text = text
