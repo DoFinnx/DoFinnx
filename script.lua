@@ -237,13 +237,42 @@ local Window = Library:CreateWindow({
 	Size = UDim2.fromOffset(780, 560),
 })
 
+-- Все вкладки создаём сразу: так их порядок в сайдбаре не зависит от порядка блоков ниже.
+local Tabs = {}
+do
+	for _, item in ipairs({
+		{ category = "Aimbot" },
+		{ "Rage", "crosshair" },
+		{ "Legit", "target" },
+		{ category = "Common" },
+		{ "Visuals", "eye" },
+		{ "Inventory", "shirt" },
+		{ "Miscellaneous", "gear" },
+		{ "Settings", "sliders" },
+		{ category = "Extras" },
+		{ "Camera", "monitor" },
+		{ "Graphics", "palette" },
+		{ "Character", "user" },
+		{ "HUD", "list" },
+		{ "Audio", "bars" },
+		{ "Social", "globe" },
+		{ "Tools", "terminal" },
+		{ "Shortcuts", "keyboard" },
+	}) do
+		if item.category then
+			Window:AddCategory(item.category)
+		else
+			Tabs[item[1]] = Window:AddTab({ Name = item[1], Icon = item[2] })
+		end
+	end
+end
+
 ----------------------------------------------------------------------
 -- AIMBOT
 ----------------------------------------------------------------------
-Window:AddCategory("Aimbot")
 
 ------------------------------- Rage ---------------------------------
-local Rage = Window:AddTab({ Name = "Rage", Icon = "crosshair" })
+local Rage = Tabs["Rage"]
 
 local Main = Rage:AddSection({ Name = "Main", Side = "Left" })
 local enabled = Main:AddToggle({ Name = "Enabled", Default = true, Flag = "rage_enabled" })
@@ -337,7 +366,7 @@ mouseOverride:AddColorpicker({ Name = "Color", Default = Color3.fromRGB(185, 78,
 mouseOverride:AddDropdown({ Name = "Style", Options = { "Fade-out", "Static", "Pulse" }, Default = "Fade-out", Width = 110 })
 
 ------------------------------- Legit --------------------------------
-local Legit = Window:AddTab({ Name = "Legit", Icon = "target" })
+local Legit = Tabs["Legit"]
 
 local LegitMain = Legit:AddSection({ Name = "Main", Side = "Left" })
 local legitEnabled = LegitMain:AddToggle({ Name = "Enabled", Default = true })
@@ -389,12 +418,11 @@ Trigger:AddToggle({ Name = "Burst Fire", Default = false })
 ----------------------------------------------------------------------
 -- COMMON
 ----------------------------------------------------------------------
-Window:AddCategory("Common")
 
 ------------------------------ Visuals -------------------------------
 -- Раскладка по референсу: слева настройки для выбранной цели (Enemies / Teammates),
 -- справа превью вашего персонажа и кнопка панели ESP Items. Только интерфейс.
-local Visuals = Window:AddTab({ Name = "Visuals", Icon = "eye" })
+local Visuals = Tabs["Visuals"]
 
 do
 	local MODEL_STYLES = { "Disabled", "Flat", "Textured", "Glow", "Metallic", "Wireframe" }
@@ -530,7 +558,7 @@ end
 -- Своя модель персонажа: внешний вид другого игрока Roblox ставится на персонажа ЛОКАЛЬНО.
 -- С включённой Synchronization модель видят и другие пользователи скрипта (у себя, тоже локально),
 -- а вы видите их модели. Обычные игроки видят настоящие аватары.
-local Inventory = Window:AddTab({ Name = "Inventory", Icon = "shirt" })
+local Inventory = Tabs["Inventory"]
 
 do
 	local PlayersService = game:GetService("Players")
@@ -1061,7 +1089,7 @@ end
 --------------------------- Miscellaneous ----------------------------
 -- Раскладка по референсу: VIEW / HUD / WORLD ESP / MISCELLANEOUS.
 -- Всплывающие панели собраны из групп-карточек (panel:AddGroup()).
-local Misc = Window:AddTab({ Name = "Miscellaneous", Icon = "gear" })
+local Misc = Tabs["Miscellaneous"]
 
 -- Рабочие экранные виджеты. Их можно перетаскивать мышью.
 local WIDGET_ACCENT = Color3.fromRGB(100, 133, 247)
@@ -2233,128 +2261,6 @@ do
 		end,
 	})
 
-	local serverPanel = MiscSection:AddSubmenu({ Name = "Server", Icon = "globe" })
-	local serverGroup = serverPanel:AddGroup()
-	serverGroup:AddButton({
-		Name = "Rejoin Server",
-		Callback = function()
-			local TeleportService = game:GetService("TeleportService")
-			Window:Notify({ Title = "Server", Text = "Rejoining...", Duration = 3 })
-			local ok = pcall(function()
-				if game.JobId ~= "" then
-					TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, localPlayer)
-				else
-					TeleportService:Teleport(game.PlaceId, localPlayer)
-				end
-			end)
-			if not ok then
-				Window:Notify({ Title = "Server", Text = "Rejoin failed.", Duration = 3 })
-			end
-		end,
-	})
-	-- Список публичных серверов этой игры (API Roblox).
-	local function fetchServers()
-		local ok, body = pcall(function()
-			return game:HttpGet(
-				"https://games.roblox.com/v1/games/" .. tostring(game.PlaceId) .. "/servers/Public?sortOrder=Asc&limit=100"
-			)
-		end)
-		if not ok then
-			return nil
-		end
-		local decodeOk, data = pcall(function()
-			return game:GetService("HttpService"):JSONDecode(body)
-		end)
-		return decodeOk and type(data) == "table" and data.data or nil
-	end
-
-	local function hop(smallest)
-		Window:Notify({ Title = "Server", Text = "Searching for a server...", Duration = 3 })
-		task.spawn(function()
-			local servers = fetchServers()
-			if not servers then
-				Window:Notify({ Title = "Server", Text = "Could not get the server list.", Duration = 3 })
-				return
-			end
-			local candidates = {}
-			for _, server in ipairs(servers) do
-				local playing, maxPlayers = tonumber(server.playing), tonumber(server.maxPlayers)
-				if server.id ~= game.JobId and playing and maxPlayers and playing < maxPlayers then
-					table.insert(candidates, server)
-				end
-			end
-			if #candidates == 0 then
-				Window:Notify({ Title = "Server", Text = "No other servers found.", Duration = 3 })
-				return
-			end
-			local pick
-			if smallest then
-				table.sort(candidates, function(a, b)
-					return a.playing < b.playing
-				end)
-				pick = candidates[1]
-			else
-				pick = candidates[math.random(1, #candidates)]
-			end
-			pcall(function()
-				game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, pick.id, localPlayer)
-			end)
-		end)
-	end
-
-	serverGroup:AddButton({
-		Name = "Server Hop",
-		Callback = function()
-			hop(false)
-		end,
-	})
-	serverGroup:AddButton({
-		Name = "Join Smallest Server",
-		Callback = function()
-			hop(true)
-		end,
-	})
-
-	-- Автоперезаход: если игра выкинула (кик, потеря связи), заходим снова.
-	local autoRejoin = false
-	Window:_track(game:GetService("GuiService").ErrorMessageChanged:Connect(function(message)
-		if autoRejoin and message ~= "" then
-			task.wait(2)
-			pcall(function()
-				game:GetService("TeleportService"):Teleport(game.PlaceId, localPlayer)
-			end)
-		end
-	end))
-	serverPanel:AddGroup():AddToggle({
-		Name = "Auto Rejoin",
-		Default = false,
-		Callback = function(value)
-			autoRejoin = value
-		end,
-	})
-
-	serverGroup:AddButton({
-		Name = "Copy Game Link",
-		Callback = function()
-			if type(setclipboard) == "function" then
-				pcall(setclipboard, "https://www.roblox.com/games/" .. tostring(game.PlaceId))
-				Window:Notify({ Title = "Server", Text = "Game link copied.", Duration = 3 })
-			else
-				Window:Notify({ Title = "Server", Text = "This executor has no setclipboard.", Duration = 3 })
-			end
-		end,
-	})
-	serverGroup:AddButton({
-		Name = "Copy Server ID",
-		Callback = function()
-			if type(setclipboard) == "function" then
-				pcall(setclipboard, game.JobId)
-				Window:Notify({ Title = "Server", Text = "Server ID copied.", Duration = 3 })
-			else
-				Window:Notify({ Title = "Server", Text = "This executor has no setclipboard.", Duration = 3 })
-			end
-		end,
-	})
 end
 
 for key, value in pairs({
@@ -2411,1438 +2317,9 @@ for key, value in pairs({
 	RU[key] = value
 end
 
-------------------------- MISC: дополнительные функции -------------------------
--- Всё локальное: видите только вы. При выключении и Unload всё возвращается.
-do
-	local RunService = game:GetService("RunService")
-	local Lighting = game:GetService("Lighting")
-	local SoundService = game:GetService("SoundService")
-	local UserInputService = game:GetService("UserInputService")
-	local TeleportService = game:GetService("TeleportService")
-	local PlayersService = game:GetService("Players")
-	local localPlayer = PlayersService.LocalPlayer
-
-	local function notify(title, text)
-		Window:Notify({ Title = title, Text = text, Duration = 3 })
-	end
-
-	local function character()
-		return localPlayer.Character
-	end
-
-	local function rootPart()
-		local char = character()
-		return char and char:FindFirstChild("HumanoidRootPart")
-	end
-
-	------------------------------ персонаж ------------------------------
-	local body = {
-		showInFirstPerson = false,
-		transparency = false,
-		transparencyValue = 0.5,
-		highlight = false,
-		highlightColor = Color3.fromRGB(100, 133, 247),
-		trail = false,
-		trailColor = Color3.fromRGB(240, 100, 160),
-		bob = false,
-		bobStrength = 1,
-	}
-	local highlightObject, trailObjects = nil, nil
-	local bobTime = 0
-
-	local function isAccessoryPart(part)
-		return part:FindFirstAncestorWhichIsA("Accoutrement") ~= nil
-	end
-
-	local RENDER_NAME = "NocturneBody_" .. tostring(math.random(1, 1e6))
-	RunService:BindToRenderStep(RENDER_NAME, Enum.RenderPriority.Camera.Value + 2, function(dt)
-		local char = character()
-		local cam = workspace.CurrentCamera
-		if not (char and cam) then
-			return
-		end
-		local head = char:FindFirstChild("Head")
-		local firstPerson = head and (cam.CFrame.Position - head.Position).Magnitude < 1.5
-
-		if body.transparency or (body.showInFirstPerson and firstPerson) then
-			for _, part in ipairs(char:GetDescendants()) do
-				if part:IsA("BasePart") then
-					if body.showInFirstPerson and firstPerson then
-						-- тело видно, голова и аксессуары скрыты, чтобы не мешали обзору
-						part.LocalTransparencyModifier = (part.Name == "Head" or isAccessoryPart(part)) and 1 or 0
-					else
-						part.LocalTransparencyModifier = body.transparencyValue
-					end
-				end
-			end
-		end
-
-		-- покачивание камеры при ходьбе
-		local humanoid = char:FindFirstChildOfClass("Humanoid")
-		if body.bob and humanoid and humanoid.MoveDirection.Magnitude > 0.1 then
-			bobTime += dt * 9
-			local s = body.bobStrength
-			cam.CFrame = cam.CFrame
-				* CFrame.new(math.sin(bobTime) * 0.06 * s, math.abs(math.cos(bobTime)) * 0.09 * s, 0)
-				* CFrame.Angles(0, 0, math.sin(bobTime) * 0.006 * s)
-		end
-	end)
-
-	local function updateCharacterEffects()
-		local char = character()
-		-- подсветка своего персонажа
-		if body.highlight and char then
-			if not highlightObject or highlightObject.Parent ~= char then
-				if highlightObject then
-					highlightObject:Destroy()
-				end
-				highlightObject = Instance.new("Highlight")
-				highlightObject.Name = "NocturneHighlight"
-				highlightObject.DepthMode = Enum.HighlightDepthMode.Occluded
-				highlightObject.Parent = char
-			end
-			highlightObject.FillColor = body.highlightColor
-			highlightObject.OutlineColor = body.highlightColor
-			highlightObject.FillTransparency = 0.75
-			highlightObject.OutlineTransparency = 0
-		elseif highlightObject then
-			highlightObject:Destroy()
-			highlightObject = nil
-		end
-
-		-- след за персонажем
-		local root = rootPart()
-		if body.trail and root then
-			if not trailObjects or trailObjects.trail.Parent ~= root then
-				if trailObjects then
-					trailObjects.trail:Destroy()
-					trailObjects.a0:Destroy()
-					trailObjects.a1:Destroy()
-				end
-				local a0 = Instance.new("Attachment")
-				a0.Position = Vector3.new(0, 1, 0)
-				a0.Parent = root
-				local a1 = Instance.new("Attachment")
-				a1.Position = Vector3.new(0, -1, 0)
-				a1.Parent = root
-				local trail = Instance.new("Trail")
-				trail.Attachment0 = a0
-				trail.Attachment1 = a1
-				trail.Lifetime = 0.6
-				trail.LightEmission = 0.6
-				trail.Transparency = NumberSequence.new(0.2, 1)
-				trail.Parent = root
-				trailObjects = { trail = trail, a0 = a0, a1 = a1 }
-			end
-			trailObjects.trail.Color = ColorSequence.new(body.trailColor)
-		elseif trailObjects then
-			trailObjects.trail:Destroy()
-			trailObjects.a0:Destroy()
-			trailObjects.a1:Destroy()
-			trailObjects = nil
-		end
-	end
-
-	------------------------------ инфо-панель ------------------------------
-	local sessionStart = os.clock()
-	local lastInput = os.clock()
-	Window:_track(UserInputService.InputBegan:Connect(function()
-		lastInput = os.clock()
-	end))
-	Window:_track(UserInputService.InputChanged:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseMovement then
-			lastInput = os.clock()
-		end
-	end))
-
-	local infoItems = { ["Session Time"] = true, Speed = true, Position = true, ["AFK Timer"] = false }
-	local infoWidget = Window:_listWidget("Info", "Info", UDim2.fromOffset(16, 120), "info")
-	infoWidget.Visible = false
-
-	local function clock(seconds)
-		seconds = math.max(0, math.floor(seconds))
-		local hours = math.floor(seconds / 3600)
-		local minutes = math.floor(seconds % 3600 / 60)
-		local secs = seconds % 60
-		if hours > 0 then
-			return string.format("%d:%02d:%02d", hours, minutes, secs)
-		end
-		return string.format("%02d:%02d", minutes, secs)
-	end
-
-	function infoWidget:_update(state)
-		local entries = {}
-		local translate = function(key)
-			return Library:Translate(key)
-		end
-		if infoItems["Session Time"] then
-			table.insert(entries, { Name = translate("Session Time") .. ":  " .. clock(os.clock() - sessionStart), Icon = "none" })
-		end
-		local root = rootPart()
-		if infoItems.Speed and root then
-			local v = root.AssemblyLinearVelocity
-			table.insert(entries, {
-				Name = translate("Speed") .. ":  " .. math.floor(Vector3.new(v.X, 0, v.Z).Magnitude + 0.5),
-				Icon = "none",
-			})
-		end
-		if infoItems.Position and root then
-			local p = root.Position
-			table.insert(entries, {
-				Name = string.format("XYZ:  %d, %d, %d", math.floor(p.X), math.floor(p.Y), math.floor(p.Z)),
-				Icon = "none",
-			})
-		end
-		if infoItems["AFK Timer"] then
-			-- Roblox кикает после 20 минут без действий
-			table.insert(entries, { Name = translate("AFK Kick In") .. ":  " .. clock(1200 - (os.clock() - lastInput)), Icon = "none" })
-		end
-		self:SetEntries(entries, state)
-	end
-
-	-- уведомление, когда на сервер заходит друг
-	local friendAlerts = false
-	Window:_track(PlayersService.PlayerAdded:Connect(function(player)
-		if not friendAlerts then
-			return
-		end
-		local ok, isFriend = pcall(function()
-			return localPlayer:IsFriendsWith(player.UserId)
-		end)
-		if ok and isFriend then
-			notify("Friends", player.DisplayName .. " " .. Library:Translate("joined the server"))
-		end
-	end))
-
-	------------------------------ атмосфера ------------------------------
-	-- Готовые пресеты неба без картинок-ассетов: время суток, атмосфера, звёзды, свет окружения.
-	local SKY_PRESETS = {
-		Sunset = {
-			time = 17.9,
-			ambient = Color3.fromRGB(150, 110, 100),
-			stars = 0,
-			atmosphere = { Color = Color3.fromRGB(255, 170, 110), Decay = Color3.fromRGB(120, 60, 90), Density = 0.32, Haze = 2.2, Glare = 1.5, Offset = 0.1 },
-		},
-		Night = {
-			time = 0,
-			ambient = Color3.fromRGB(60, 70, 110),
-			stars = 4000,
-			atmosphere = { Color = Color3.fromRGB(40, 50, 90), Decay = Color3.fromRGB(20, 20, 40), Density = 0.3, Haze = 1, Glare = 0, Offset = 0 },
-		},
-		Space = {
-			time = 0,
-			ambient = Color3.fromRGB(80, 80, 120),
-			stars = 10000,
-			atmosphere = { Color = Color3.fromRGB(10, 10, 20), Decay = Color3.fromRGB(0, 0, 0), Density = 0, Haze = 0, Glare = 0, Offset = 0 },
-		},
-		Neon = {
-			time = 0,
-			ambient = Color3.fromRGB(140, 80, 200),
-			stars = 3000,
-			atmosphere = { Color = Color3.fromRGB(200, 80, 255), Decay = Color3.fromRGB(60, 20, 120), Density = 0.35, Haze = 2.5, Glare = 2, Offset = 0.2 },
-		},
-		["Foggy Morning"] = {
-			time = 7,
-			ambient = Color3.fromRGB(160, 165, 175),
-			stars = 0,
-			atmosphere = { Color = Color3.fromRGB(200, 210, 225), Decay = Color3.fromRGB(150, 160, 180), Density = 0.45, Haze = 3, Glare = 0.3, Offset = 0 },
-		},
-		["Golden Hour"] = {
-			time = 6.4,
-			ambient = Color3.fromRGB(170, 140, 100),
-			stars = 0,
-			atmosphere = { Color = Color3.fromRGB(255, 210, 140), Decay = Color3.fromRGB(150, 110, 70), Density = 0.28, Haze = 1.8, Glare = 1, Offset = 0.15 },
-		},
-	}
-	local ATMOSPHERE_PROPS = { "Color", "Decay", "Density", "Haze", "Glare", "Offset" }
-
-	local world = {
-		sky = "Default",
-		weather = "None",
-		rainbow = false,
-		simpleWater = false,
-	}
-	local saved = {} -- исходные значения: ["Lighting.ClockTime"] = ..., ["Atmosphere.Color"] = ...
-	local createdAtmosphere, createdSky = nil, nil
-
-	local function remember(key, object, prop)
-		if saved[key] == nil then
-			saved[key] = { object = object, prop = prop, value = object[prop] }
-		end
-	end
-	local function restore(prefix)
-		for key, entry in pairs(saved) do
-			if string.sub(key, 1, #prefix) == prefix then
-				if entry.object.Parent or entry.object == Lighting or entry.object == workspace.Terrain then
-					pcall(function()
-						entry.object[entry.prop] = entry.value
-					end)
-				end
-				saved[key] = nil
-			end
-		end
-	end
-
-	local function applySky()
-		local preset = SKY_PRESETS[world.sky]
-		if not preset then
-			restore("sky.")
-			if createdAtmosphere then
-				createdAtmosphere:Destroy()
-				createdAtmosphere = nil
-			end
-			if createdSky then
-				createdSky:Destroy()
-				createdSky = nil
-			end
-			return
-		end
-		remember("sky.ClockTime", Lighting, "ClockTime")
-		Lighting.ClockTime = preset.time
-		remember("sky.Ambient", Lighting, "Ambient")
-		remember("sky.OutdoorAmbient", Lighting, "OutdoorAmbient")
-		Lighting.Ambient = preset.ambient
-		Lighting.OutdoorAmbient = preset.ambient
-
-		local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
-		if not atmosphere then
-			createdAtmosphere = Instance.new("Atmosphere")
-			createdAtmosphere.Name = "NocturneAtmosphere"
-			createdAtmosphere.Parent = Lighting
-			atmosphere = createdAtmosphere
-		end
-		for _, prop in ipairs(ATMOSPHERE_PROPS) do
-			if atmosphere ~= createdAtmosphere then
-				remember("sky.atm." .. prop, atmosphere, prop)
-			end
-			atmosphere[prop] = preset.atmosphere[prop]
-		end
-
-		local sky = Lighting:FindFirstChildOfClass("Sky")
-		if not sky then
-			createdSky = Instance.new("Sky")
-			createdSky.Name = "NocturneSky"
-			createdSky.Parent = Lighting
-			sky = createdSky
-		end
-		if sky ~= createdSky then
-			remember("sky.StarCount", sky, "StarCount")
-		end
-		sky.StarCount = preset.stars
-	end
-
-	local function applyRainbow()
-		if world.rainbow then
-			remember("rainbow.Ambient", Lighting, "Ambient")
-			remember("rainbow.OutdoorAmbient", Lighting, "OutdoorAmbient")
-			local color = Color3.fromHSV((os.clock() / 12) % 1, 0.55, 0.85)
-			Lighting.Ambient = color
-			Lighting.OutdoorAmbient = color
-		else
-			restore("rainbow.")
-		end
-	end
-
-	local function applyWater()
-		local terrain = workspace.Terrain
-		if world.simpleWater then
-			for _, prop in ipairs({ "WaterWaveSize", "WaterWaveSpeed", "WaterReflectance", "WaterTransparency" }) do
-				remember("water." .. prop, terrain, prop)
-			end
-			terrain.WaterWaveSize = 0
-			terrain.WaterWaveSpeed = 0
-			terrain.WaterReflectance = 0
-			terrain.WaterTransparency = 0.6
-		else
-			restore("water.")
-		end
-	end
-
-	-- Погода: частицы над камерой (только у вас).
-	local weatherPart, weatherEmitter = nil, nil
-	local function applyWeather()
-		if world.weather == "None" then
-			if weatherPart then
-				weatherPart:Destroy()
-				weatherPart, weatherEmitter = nil, nil
-			end
-			return
-		end
-		if not weatherPart then
-			weatherPart = Instance.new("Part")
-			weatherPart.Name = "NocturneWeather"
-			weatherPart.Anchored = true
-			weatherPart.CanCollide = false
-			weatherPart.CanQuery = false
-			weatherPart.CanTouch = false
-			weatherPart.Transparency = 1
-			weatherPart.Size = Vector3.new(80, 1, 80)
-			weatherPart.Parent = workspace.CurrentCamera
-			weatherEmitter = Instance.new("ParticleEmitter")
-			weatherEmitter.EmissionDirection = Enum.NormalId.Bottom
-			weatherEmitter.Parent = weatherPart
-		end
-		if world.weather == "Snow" then
-			weatherEmitter.Rate = 250
-			weatherEmitter.Lifetime = NumberRange.new(6, 9)
-			weatherEmitter.Speed = NumberRange.new(5, 9)
-			weatherEmitter.Size = NumberSequence.new(0.25)
-			weatherEmitter.SpreadAngle = Vector2.new(25, 25)
-			weatherEmitter.Acceleration = Vector3.new(0, -1, 0)
-			weatherEmitter.Color = ColorSequence.new(Color3.new(1, 1, 1))
-			weatherEmitter.LightEmission = 0.4
-			pcall(function()
-				weatherEmitter.Squash = NumberSequence.new(0)
-				weatherEmitter.Orientation = Enum.ParticleOrientation.FacingCamera
-			end)
-		else -- Rain
-			weatherEmitter.Rate = 700
-			weatherEmitter.Lifetime = NumberRange.new(0.8, 1.1)
-			weatherEmitter.Speed = NumberRange.new(70, 90)
-			weatherEmitter.Size = NumberSequence.new(0.07)
-			weatherEmitter.SpreadAngle = Vector2.new(3, 3)
-			weatherEmitter.Acceleration = Vector3.new(0, 0, 0)
-			weatherEmitter.Color = ColorSequence.new(Color3.fromRGB(170, 190, 220))
-			weatherEmitter.LightEmission = 0.2
-			pcall(function()
-				weatherEmitter.Squash = NumberSequence.new(-3) -- вытягиваем капли в штрихи
-				weatherEmitter.Orientation = Enum.ParticleOrientation.VelocityParallel
-			end)
-		end
-	end
-
-	Window:_track(RunService.RenderStepped:Connect(function()
-		if weatherPart and workspace.CurrentCamera then
-			weatherPart.CFrame = CFrame.new(workspace.CurrentCamera.CFrame.Position + Vector3.new(0, 30, 0))
-		end
-	end))
-
-	------------------------------ звук ------------------------------
-	local audio = { gameVolume = false, gameScale = 0.5, musicVolume = 0.5 }
-	local originalVolume = setmetatable({}, { __mode = "k" })
-	local musicSound = nil
-	local volumeConnections = {}
-
-	local function scaleSound(sound)
-		if sound:IsA("Sound") and sound ~= musicSound then
-			if originalVolume[sound] == nil then
-				originalVolume[sound] = sound.Volume
-			end
-			sound.Volume = originalVolume[sound] * audio.gameScale
-		end
-	end
-
-	local function applyGameVolume()
-		if audio.gameVolume then
-			for _, root in ipairs({ workspace, SoundService }) do
-				for _, item in ipairs(root:GetDescendants()) do
-					scaleSound(item)
-				end
-				if not volumeConnections[root] then
-					volumeConnections[root] = root.DescendantAdded:Connect(function(item)
-						if audio.gameVolume then
-							task.defer(scaleSound, item)
-						end
-					end)
-				end
-			end
-		else
-			for _, connection in pairs(volumeConnections) do
-				connection:Disconnect()
-			end
-			volumeConnections = {}
-			for sound, volume in pairs(originalVolume) do
-				if sound.Parent then
-					sound.Volume = volume
-				end
-				originalVolume[sound] = nil
-			end
-		end
-	end
-
-	local function playMusic(id)
-		id = tonumber(string.match(tostring(id or ""), "%d+"))
-		if not id then
-			notify("Music", "Enter a sound ID.")
-			return
-		end
-		if not musicSound then
-			musicSound = Instance.new("Sound")
-			musicSound.Name = "NocturneMusic"
-			musicSound.Looped = true
-			musicSound.Parent = SoundService
-		end
-		musicSound.SoundId = "rbxassetid://" .. id
-		musicSound.Volume = audio.musicVolume
-		musicSound:Play()
-	end
-
-	local function stopMusic()
-		if musicSound then
-			musicSound:Stop()
-		end
-	end
-
-	-- Сообщение в чат (обычное, его видят все — отправляется только по кнопке).
-	local function sendChat(text)
-		if text == "" then
-			return
-		end
-		local ok = pcall(function()
-			local TextChatService = game:GetService("TextChatService")
-			if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
-				TextChatService.TextChannels.RBXGeneral:SendAsync(text)
-			else
-				game:GetService("ReplicatedStorage").DefaultChatSystemChatEvents.SayMessageRequest:FireServer(text, "All")
-			end
-		end)
-		if not ok then
-			notify("Chat", "Could not send the message.")
-		end
-	end
-
-	------------------------- общий цикл и Unload -------------------------
-	task.spawn(function()
-		while Window.gui.Parent do
-			pcall(updateCharacterEffects)
-			pcall(applySky)
-			pcall(applyRainbow)
-			pcall(applyWater)
-			task.wait(0.5)
-		end
-	end)
-
-	Window:_track({
-		Disconnect = function()
-			pcall(function()
-				RunService:UnbindFromRenderStep(RENDER_NAME)
-			end)
-			for key in pairs(body) do
-				if type(body[key]) == "boolean" then
-					body[key] = false
-				end
-			end
-			pcall(updateCharacterEffects)
-			local char = character()
-			if char then
-				for _, part in ipairs(char:GetDescendants()) do
-					if part:IsA("BasePart") then
-						part.LocalTransparencyModifier = 0
-					end
-				end
-			end
-			world.sky, world.weather, world.rainbow, world.simpleWater = "Default", "None", false, false
-			pcall(applySky)
-			pcall(applyRainbow)
-			pcall(applyWater)
-			pcall(applyWeather)
-			audio.gameVolume = false
-			pcall(applyGameVolume)
-			if musicSound then
-				musicSound:Destroy()
-			end
-		end,
-	})
-
-	------------------------------ интерфейс ------------------------------
-	local CharacterSection = Misc:AddSection({ Name = "Character", Side = "Left" })
-	CharacterSection:AddToggle({
-		Name = "Body in First Person",
-		Icon = "user",
-		Default = false,
-		Callback = function(value)
-			body.showInFirstPerson = value
-		end,
-	})
-	CharacterSection:AddToggle({
-		Name = "Self Transparency",
-		Default = false,
-		Callback = function(value)
-			body.transparency = value
-		end,
-	}):AddSettings("Self Transparency"):AddGroup():AddSlider({
-		Name = "Value",
-		Min = 0,
-		Max = 90,
-		Default = 50,
-		Suffix = "%",
-		Callback = function(value)
-			body.transparencyValue = value / 100
-		end,
-	})
-	CharacterSection:AddToggle({
-		Name = "Self Highlight",
-		Default = false,
-		Callback = function(value)
-			body.highlight = value
-			updateCharacterEffects()
-		end,
-	}):AddColorpicker({
-		Default = body.highlightColor,
-		Callback = function(value)
-			body.highlightColor = value
-		end,
-	})
-	CharacterSection:AddToggle({
-		Name = "Trail",
-		Default = false,
-		Callback = function(value)
-			body.trail = value
-			updateCharacterEffects()
-		end,
-	}):AddColorpicker({
-		Default = body.trailColor,
-		Callback = function(value)
-			body.trailColor = value
-		end,
-	})
-	CharacterSection:AddToggle({
-		Name = "Camera Bob",
-		Default = false,
-		Callback = function(value)
-			body.bob = value
-		end,
-	}):AddSettings("Camera Bob"):AddGroup():AddSlider({
-		Name = "Strength",
-		Min = 10,
-		Max = 300,
-		Default = 100,
-		Suffix = "%",
-		Callback = function(value)
-			body.bobStrength = value / 100
-		end,
-	})
-
-	local InfoSection = Misc:AddSection({ Name = "Info", Side = "Right" })
-	local infoToggle = InfoSection:AddToggle({
-		Name = "Info Panel",
-		Icon = "info",
-		Default = false,
-		Callback = function(value)
-			infoWidget:SetVisible(value)
-		end,
-	})
-	infoToggle:AddSettings("Info Panel"):AddGroup():AddChecklist({
-		Options = { "Session Time", "Speed", "Position", "AFK Timer" },
-		Default = { "Session Time", "Speed", "Position" },
-		Callback = function(selected)
-			for key in pairs(infoItems) do
-				infoItems[key] = false
-			end
-			for _, name in ipairs(selected) do
-				infoItems[name] = true
-			end
-		end,
-	})
-	InfoSection:AddToggle({
-		Name = "Friend Alerts",
-		Icon = "user",
-		Default = false,
-		Callback = function(value)
-			friendAlerts = value
-		end,
-	})
-
-	local AtmosphereSection = Misc:AddSection({ Name = "Atmosphere", Side = "Left" })
-	AtmosphereSection:AddDropdown({
-		Name = "Sky Preset",
-		Options = { "Default", "Sunset", "Golden Hour", "Night", "Space", "Neon", "Foggy Morning" },
-		Default = "Default",
-		Width = 130,
-		Callback = function(value)
-			world.sky = value
-			applySky()
-		end,
-	})
-	AtmosphereSection:AddDropdown({
-		Name = "Weather",
-		Options = { "None", "Snow", "Rain" },
-		Default = "None",
-		Width = 130,
-		Callback = function(value)
-			world.weather = value
-			applyWeather()
-		end,
-	})
-	AtmosphereSection:AddToggle({
-		Name = "Rainbow Ambient",
-		Default = false,
-		Callback = function(value)
-			world.rainbow = value
-			applyRainbow()
-		end,
-	})
-	AtmosphereSection:AddToggle({
-		Name = "Simple Water",
-		Default = false,
-		Callback = function(value)
-			world.simpleWater = value
-			applyWater()
-		end,
-	})
-
-	local AudioSection = Misc:AddSection({ Name = "Audio & Chat", Side = "Right" })
-	AudioSection:AddToggle({
-		Name = "Game Volume",
-		Default = false,
-		Callback = function(value)
-			audio.gameVolume = value
-			applyGameVolume()
-		end,
-	}):AddSettings("Game Volume"):AddGroup():AddSlider({
-		Name = "Volume",
-		Min = 0,
-		Max = 100,
-		Default = 50,
-		Suffix = "%",
-		Callback = function(value)
-			audio.gameScale = value / 100
-			if audio.gameVolume then
-				for sound in pairs(originalVolume) do
-					scaleSound(sound)
-				end
-			end
-		end,
-	})
-	local musicPanel = AudioSection:AddSubmenu({ Name = "Music" })
-	local musicGroup = musicPanel:AddGroup()
-	local musicBox = musicGroup:AddTextbox({ Name = "Sound ID", Placeholder = "rbxassetid", Width = 120 })
-	musicGroup:AddSlider({
-		Name = "Volume",
-		Min = 0,
-		Max = 100,
-		Default = 50,
-		Suffix = "%",
-		Callback = function(value)
-			audio.musicVolume = value / 100
-			if musicSound then
-				musicSound.Volume = audio.musicVolume
-			end
-		end,
-	})
-	local musicButtons = musicPanel:AddGroup()
-	musicButtons:AddButton({
-		Name = "Play",
-		Callback = function()
-			playMusic(musicBox:Get())
-		end,
-	})
-	musicButtons:AddButton({ Name = "Stop", Callback = stopMusic })
-
-	local chatBox = AudioSection:AddTextbox({ Name = "Message", Placeholder = "Text", Width = 150 })
-	AudioSection:AddButton({
-		Name = "Send to Chat",
-		Callback = function()
-			sendChat(chatBox:Get())
-		end,
-	})
-
-	local SocialSection = Misc:AddSection({ Name = "Social", Side = "Left" })
-	local onlineFriends = {} -- подпись -> данные друга
-	local friendDropdown = SocialSection:AddDropdown({
-		Name = "Friend",
-		Options = {},
-		AllowNone = true,
-		Width = 150,
-	})
-	local function refreshFriends()
-		task.spawn(function()
-			local ok, list = pcall(function()
-				return localPlayer:GetFriendsOnline(50)
-			end)
-			if not ok or type(list) ~= "table" then
-				notify("Friends", "Could not get online friends.")
-				return
-			end
-			onlineFriends = {}
-			local options = {}
-			for _, friend in ipairs(list) do
-				-- LocationType 4 = в игре: есть PlaceId и GameId (сервер)
-				if friend.PlaceId and friend.GameId then
-					local caption = tostring(friend.DisplayName or friend.UserName) .. " · " .. tostring(friend.LastLocation or "")
-					onlineFriends[caption] = friend
-					table.insert(options, caption)
-				end
-			end
-			friendDropdown:Refresh(options)
-			notify("Friends", #options .. " " .. Library:Translate("friends in game"))
-		end)
-	end
-	SocialSection:AddButton({ Name = "Refresh Friends", Callback = refreshFriends })
-	SocialSection:AddButton({
-		Name = "Join Friend",
-		Callback = function()
-			local friend = onlineFriends[friendDropdown:Get() or ""]
-			if not friend then
-				notify("Friends", "Pick a friend who is in a game.")
-				return
-			end
-			pcall(function()
-				TeleportService:TeleportToPlaceInstance(friend.PlaceId, friend.GameId, localPlayer)
-			end)
-		end,
-	})
-	local placeBox = SocialSection:AddTextbox({ Name = "Place ID", Placeholder = "123456", Width = 120 })
-	SocialSection:AddButton({
-		Name = "Join Place",
-		Callback = function()
-			local placeId = tonumber(string.match(placeBox:Get(), "%d+"))
-			if not placeId then
-				notify("Server", "Enter a place ID.")
-				return
-			end
-			pcall(function()
-				TeleportService:Teleport(placeId, localPlayer)
-			end)
-		end,
-	})
-
-	for key, value in pairs({
-		Character = "Персонаж",
-		["Body in First Person"] = "Тело от первого лица",
-		["Self Transparency"] = "Прозрачность себя",
-		["Self Highlight"] = "Подсветка себя",
-		Trail = "След",
-		["Camera Bob"] = "Покачивание камеры",
-		Strength = "Сила",
-		["Info Panel"] = "Инфо-панель",
-		["Session Time"] = "Время в игре",
-		Position = "Координаты",
-		["AFK Timer"] = "Таймер АФК",
-		["AFK Kick In"] = "Кик за АФК через",
-		["Friend Alerts"] = "Уведомления о друзьях",
-		Friends = "Друзья",
-		["joined the server"] = "зашёл на сервер",
-		Atmosphere = "Атмосфера",
-		["Sky Preset"] = "Небо",
-		Weather = "Погода",
-		["Rainbow Ambient"] = "Радужный свет",
-		["Simple Water"] = "Простая вода",
-		["Audio & Chat"] = "Звук и чат",
-		["Game Volume"] = "Громкость игры",
-		Volume = "Громкость",
-		Music = "Музыка",
-		["Sound ID"] = "ID звука",
-		Play = "Играть",
-		Stop = "Стоп",
-		Message = "Сообщение",
-		Text = "Текст",
-		["Send to Chat"] = "Отправить в чат",
-		Social = "Друзья и места",
-		Friend = "Друг",
-		["Refresh Friends"] = "Обновить друзей",
-		["Join Friend"] = "Зайти к другу",
-		["Place ID"] = "ID места",
-		["Join Place"] = "Зайти в место",
-		["Enter a sound ID."] = "Введите ID звука.",
-		["Could not send the message."] = "Не удалось отправить сообщение.",
-		["Could not get online friends."] = "Не удалось получить друзей онлайн.",
-		["friends in game"] = "друзей в игре",
-		["Pick a friend who is in a game."] = "Выберите друга, который сейчас в игре.",
-		["Enter a place ID."] = "Введите ID места.",
-	}) do
-		RU[key] = value
-	end
-end
-
-------------------------- MISC: эффекты, оверлеи, видимость -------------------------
--- Всё локальное: видите только вы. При выключении и Unload всё возвращается.
-do
-	local RunService = game:GetService("RunService")
-	local Lighting = game:GetService("Lighting")
-	local UserInputService = game:GetService("UserInputService")
-	local PlayersService = game:GetService("Players")
-	local localPlayer = PlayersService.LocalPlayer
-
-	local function camera()
-		return workspace.CurrentCamera
-	end
-
-	------------------------------ эффекты ------------------------------
-	local fx = {
-		bloom = false,
-		bloomIntensity = 1,
-		sunRays = false,
-		dof = false,
-		dofFocus = 30,
-		motionBlur = false,
-		motionStrength = 1,
-		filter = "None",
-		vignette = false,
-		vignetteStrength = 0.5,
-	}
-	local effects = {} -- имя -> эффект, который создали мы
-
-	-- Создаёт (или убирает) наш эффект. Имена начинаются с «Nocturne», чтобы Removals их не трогал.
-	local function ensureEffect(name, className, parent, enabled)
-		local effect = effects[name]
-		if enabled then
-			if not effect or effect.Parent ~= parent then
-				if effect then
-					effect:Destroy()
-				end
-				effect = Instance.new(className)
-				effect.Name = name
-				effect.Parent = parent
-				effects[name] = effect
-			end
-			return effect
-		elseif effect then
-			effect:Destroy()
-			effects[name] = nil
-		end
-		return nil
-	end
-
-	local FILTERS = {
-		Warm = { tint = Color3.fromRGB(255, 225, 190), saturation = 0.1, contrast = 0.05, brightness = 0 },
-		Cold = { tint = Color3.fromRGB(195, 220, 255), saturation = -0.05, contrast = 0.08, brightness = 0 },
-		Noir = { tint = Color3.new(1, 1, 1), saturation = -1, contrast = 0.35, brightness = -0.03 },
-		Sepia = { tint = Color3.fromRGB(255, 220, 170), saturation = -0.75, contrast = 0.1, brightness = 0.02 },
-		Vivid = { tint = Color3.new(1, 1, 1), saturation = 0.5, contrast = 0.15, brightness = 0 },
-		Dreamy = { tint = Color3.fromRGB(240, 215, 255), saturation = 0.15, contrast = -0.1, brightness = 0.05 },
-	}
-
-	local function applyEffects()
-		local cam = camera()
-		local bloom = ensureEffect("NocturneBloom", "BloomEffect", Lighting, fx.bloom)
-		if bloom then
-			bloom.Intensity = fx.bloomIntensity
-			bloom.Size = 30
-			bloom.Threshold = 0.9
-		end
-		local rays = ensureEffect("NocturneSunRays", "SunRaysEffect", Lighting, fx.sunRays)
-		if rays then
-			rays.Intensity = 0.12
-			rays.Spread = 0.8
-		end
-		local dof = ensureEffect("NocturneDepthOfField", "DepthOfFieldEffect", Lighting, fx.dof)
-		if dof then
-			dof.FocusDistance = fx.dofFocus
-			dof.InFocusRadius = 20
-			dof.FarIntensity = 0.6
-			dof.NearIntensity = 0.3
-		end
-		local preset = FILTERS[fx.filter]
-		local filter = cam and ensureEffect("NocturneFilter", "ColorCorrectionEffect", cam, preset ~= nil)
-		if filter and preset then
-			filter.TintColor = preset.tint
-			filter.Saturation = preset.saturation
-			filter.Contrast = preset.contrast
-			filter.Brightness = preset.brightness
-		end
-		if cam then
-			ensureEffect("NocturneMotionBlur", "BlurEffect", cam, fx.motionBlur)
-		end
-	end
-
-	-- размытие в движении: чем быстрее поворачивается камера, тем сильнее
-	local lastLook = nil
-	Window:_track(RunService.RenderStepped:Connect(function(dt)
-		local blur = effects.NocturneMotionBlur
-		local cam = camera()
-		if not (blur and cam) then
-			lastLook = nil
-			return
-		end
-		local look = cam.CFrame.LookVector
-		if lastLook then
-			local angle = math.acos(math.clamp(look:Dot(lastLook), -1, 1))
-			local speed = angle / math.max(dt, 1 / 240)
-			local target = math.clamp(speed * 2.2 * fx.motionStrength, 0, 14)
-			blur.Size = blur.Size + (target - blur.Size) * math.clamp(dt * 12, 0, 1)
-		end
-		lastLook = look
-	end))
-
-	-- виньетка: четыре затемнённых края экрана
-	local vignetteFrame = Instance.new("Frame")
-	vignetteFrame.Name = "NocturneVignette"
-	vignetteFrame.BackgroundTransparency = 1
-	vignetteFrame.Size = UDim2.fromScale(1, 1)
-	vignetteFrame.Visible = false
-	vignetteFrame.ZIndex = 0
-	vignetteFrame.Parent = Window.widgetLayer
-	local vignetteEdges = {}
-	for _, side in ipairs({
-		{ UDim2.fromScale(0, 0), UDim2.fromScale(1, 0.35), 90 }, -- верх
-		{ UDim2.fromScale(0, 0.65), UDim2.fromScale(1, 0.35), 270 }, -- низ
-		{ UDim2.fromScale(0, 0), UDim2.fromScale(0.3, 1), 0 }, -- лево
-		{ UDim2.fromScale(0.7, 0), UDim2.fromScale(0.3, 1), 180 }, -- право
-	}) do
-		local edge = Instance.new("Frame")
-		edge.BorderSizePixel = 0
-		edge.BackgroundColor3 = Color3.new(0, 0, 0)
-		edge.Position = side[1]
-		edge.Size = side[2]
-		edge.Parent = vignetteFrame
-		local gradient = Instance.new("UIGradient")
-		gradient.Rotation = side[3]
-		gradient.Parent = edge
-		table.insert(vignetteEdges, gradient)
-	end
-	local function applyVignette()
-		vignetteFrame.Visible = fx.vignette
-		for _, gradient in ipairs(vignetteEdges) do
-			gradient.Transparency = NumberSequence.new({
-				NumberSequenceKeypoint.new(0, 1 - fx.vignetteStrength * 0.8),
-				NumberSequenceKeypoint.new(1, 1),
-			})
-		end
-	end
-
-	------------------------------ оверлей клавиш ------------------------------
-	-- Показывает нажатые WASD, пробел и кнопки мыши (для записи видео), плюс клики в секунду.
-	local keystrokes = Instance.new("Frame")
-	keystrokes.Name = "NocturneKeystrokes"
-	keystrokes.BackgroundTransparency = 1
-	keystrokes.Position = UDim2.new(1, -190, 1, -260)
-	keystrokes.Size = UDim2.fromOffset(170, 180)
-	keystrokes.Visible = false
-	keystrokes.Parent = Window.widgetLayer
-	Window:_draggable(keystrokes)
-	Window:_widgetScaleTarget(keystrokes)
-
-	local keyViews = {}
-	local clicks = {}
-	local function keyBox(name, text, x, y, w, h)
-		local box = Instance.new("Frame")
-		box.Position = UDim2.fromOffset(x, y)
-		box.Size = UDim2.fromOffset(w, h)
-		box.BackgroundColor3 = Color3.fromRGB(13, 14, 19)
-		box.BackgroundTransparency = 0.35
-		box.Parent = keystrokes
-		local c = Instance.new("UICorner")
-		c.CornerRadius = UDim.new(0, 8)
-		c.Parent = box
-		local label = Instance.new("TextLabel")
-		label.BackgroundTransparency = 1
-		label.Size = UDim2.fromScale(1, 1)
-		label.Font = Enum.Font.GothamBold
-		label.TextSize = 14
-		label.TextColor3 = Color3.fromRGB(226, 227, 233)
-		label.Text = text
-		label.Parent = box
-		keyViews[name] = { box = box, label = label }
-		return label
-	end
-	keyBox("W", "W", 60, 0, 50, 50)
-	keyBox("A", "A", 5, 55, 50, 50)
-	keyBox("S", "S", 60, 55, 50, 50)
-	keyBox("D", "D", 115, 55, 50, 50)
-	keyBox("Space", "SPACE", 5, 110, 160, 30)
-	local lmbLabel = keyBox("LMB", "LMB", 5, 145, 78, 34)
-	keyBox("RMB", "RMB", 87, 145, 78, 34)
-
-	local function isDown(name)
-		if name == "LMB" then
-			return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-		elseif name == "RMB" then
-			return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
-		end
-		return UserInputService:IsKeyDown(Enum.KeyCode[name])
-	end
-
-	Window:_track(UserInputService.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			table.insert(clicks, os.clock())
-		end
-	end))
-	Window:_track(RunService.RenderStepped:Connect(function()
-		if not keystrokes.Visible then
-			return
-		end
-		for name, view in pairs(keyViews) do
-			local down = isDown(name)
-			view.box.BackgroundColor3 = down and Library.Theme.Accent or Color3.fromRGB(13, 14, 19)
-			view.box.BackgroundTransparency = down and 0.1 or 0.35
-		end
-		local now = os.clock()
-		while clicks[1] and now - clicks[1] > 1 do
-			table.remove(clicks, 1)
-		end
-		lmbLabel.Text = #clicks > 0 and (#clicks .. " CPS") or "LMB"
-	end))
-
-	------------------------------ инфо о сервере ------------------------------
-	local serverWidget = Window:_listWidget("ServerInfo", "Server Info", UDim2.fromOffset(16, 300), "globe")
-	serverWidget.Visible = false
-	local placeName = nil
-	task.spawn(function()
-		local ok, info = pcall(function()
-			return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
-		end)
-		placeName = ok and info and info.Name or nil
-	end)
-
-	local function clock(seconds)
-		seconds = math.max(0, math.floor(seconds))
-		return string.format("%d:%02d:%02d", math.floor(seconds / 3600), math.floor(seconds % 3600 / 60), seconds % 60)
-	end
-
-	function serverWidget:_update(state)
-		local entries = {}
-		if placeName then
-			table.insert(entries, { Name = placeName, Icon = "none" })
-		end
-		table.insert(entries, {
-			Name = Library:Translate("Players") .. ":  " .. #PlayersService:GetPlayers() .. " / " .. PlayersService.MaxPlayers,
-			Icon = "none",
-		})
-		table.insert(entries, {
-			Name = Library:Translate("Server Uptime") .. ":  " .. clock(workspace.DistributedGameTime),
-			Icon = "none",
-		})
-		local ok, ping = pcall(function()
-			return localPlayer:GetNetworkPing()
-		end)
-		if ok and type(ping) == "number" then
-			table.insert(entries, { Name = "Ping:  " .. math.floor(ping * 1000 + 0.5) .. " ms", Icon = "none" })
-		end
-		self:SetEntries(entries, state)
-	end
-
-	------------------------------ видимость ------------------------------
-	local visibility = { hideNames = false, hideOthers = false, hideAccessories = false }
-	local savedNameDisplay = setmetatable({}, { __mode = "k" }) -- humanoid -> исходный DisplayDistanceType
-
-	local function applyVisibility()
-		for _, player in ipairs(PlayersService:GetPlayers()) do
-			local char = player.Character
-			if char and player ~= localPlayer then
-				local humanoid = char:FindFirstChildOfClass("Humanoid")
-				if humanoid then
-					if visibility.hideNames then
-						if savedNameDisplay[humanoid] == nil then
-							savedNameDisplay[humanoid] = humanoid.DisplayDistanceType
-						end
-						humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-					elseif savedNameDisplay[humanoid] ~= nil then
-						humanoid.DisplayDistanceType = savedNameDisplay[humanoid]
-						savedNameDisplay[humanoid] = nil
-					end
-				end
-				for _, part in ipairs(char:GetDescendants()) do
-					if part:IsA("BasePart") or part:IsA("Decal") then
-						part.LocalTransparencyModifier = visibility.hideOthers and 1 or 0
-					end
-				end
-			end
-		end
-	end
-
-	-- свои аксессуары скрываем каждый кадр (камера Roblox сама меняет прозрачность своего персонажа)
-	Window:_track(RunService.RenderStepped:Connect(function()
-		if not visibility.hideAccessories then
-			return
-		end
-		local char = localPlayer.Character
-		if char then
-			for _, item in ipairs(char:GetChildren()) do
-				if item:IsA("Accoutrement") then
-					local handle = item:FindFirstChild("Handle")
-					if handle then
-						handle.LocalTransparencyModifier = 1
-					end
-				end
-			end
-		end
-	end))
-
-	------------------------------ облака и время ------------------------------
-	local sky = { clouds = false, cover = 0.6, density = 0.6, cloudColor = Color3.new(1, 1, 1), timeLapse = false, timeSpeed = 10 }
-	local createdClouds, savedClouds = nil, nil
-
-	local function applyClouds()
-		local terrain = workspace.Terrain
-		local clouds = terrain:FindFirstChildOfClass("Clouds")
-		if sky.clouds then
-			if not clouds then
-				createdClouds = Instance.new("Clouds")
-				createdClouds.Name = "NocturneClouds"
-				createdClouds.Parent = terrain
-				clouds = createdClouds
-			elseif clouds ~= createdClouds and not savedClouds then
-				savedClouds = { object = clouds, Cover = clouds.Cover, Density = clouds.Density, Color = clouds.Color, Enabled = clouds.Enabled }
-			end
-			clouds.Enabled = true
-			clouds.Cover = sky.cover
-			clouds.Density = sky.density
-			clouds.Color = sky.cloudColor
-		else
-			if createdClouds then
-				createdClouds:Destroy()
-				createdClouds = nil
-			end
-			if savedClouds then
-				local object = savedClouds.object
-				if object.Parent then
-					object.Cover, object.Density, object.Color, object.Enabled =
-						savedClouds.Cover, savedClouds.Density, savedClouds.Color, savedClouds.Enabled
-				end
-				savedClouds = nil
-			end
-		end
-	end
-
-	-- ускоренная смена дня и ночи: «часов в минуту»
-	Window:_track(RunService.Heartbeat:Connect(function(dt)
-		if sky.timeLapse then
-			Lighting.ClockTime = (Lighting.ClockTime + dt * sky.timeSpeed / 60) % 24
-		end
-	end))
-
-	------------------------- общий цикл и Unload -------------------------
-	task.spawn(function()
-		while Window.gui.Parent do
-			pcall(applyEffects)
-			pcall(applyVisibility)
-			pcall(applyClouds)
-			task.wait(0.5)
-		end
-	end)
-
-	Window:_track({
-		Disconnect = function()
-			for key in pairs(fx) do
-				if type(fx[key]) == "boolean" then
-					fx[key] = false
-				end
-			end
-			fx.filter = "None"
-			pcall(applyEffects)
-			for _, effect in pairs(effects) do
-				effect:Destroy()
-			end
-			visibility.hideNames, visibility.hideOthers, visibility.hideAccessories = false, false, false
-			pcall(applyVisibility)
-			sky.clouds, sky.timeLapse = false, false
-			pcall(applyClouds)
-		end,
-	})
-
-	------------------------------ интерфейс ------------------------------
-	local EffectsSection = Misc:AddSection({ Name = "Effects", Side = "Right" })
-	local postPanel = EffectsSection:AddSubmenu({ Name = "Post Effects", Icon = "palette" })
-	local bloomGroup = postPanel:AddGroup()
-	bloomGroup:AddToggle({
-		Name = "Bloom",
-		Default = false,
-		Callback = function(value)
-			fx.bloom = value
-			applyEffects()
-		end,
-	})
-	bloomGroup:AddSlider({
-		Name = "Intensity",
-		Min = 10,
-		Max = 300,
-		Default = 100,
-		Suffix = "%",
-		Callback = function(value)
-			fx.bloomIntensity = value / 100
-			applyEffects()
-		end,
-	})
-	bloomGroup:AddToggle({
-		Name = "Sun Rays",
-		Default = false,
-		Callback = function(value)
-			fx.sunRays = value
-			applyEffects()
-		end,
-	})
-	local dofGroup = postPanel:AddGroup()
-	dofGroup:AddToggle({
-		Name = "Depth of Field",
-		Default = false,
-		Callback = function(value)
-			fx.dof = value
-			applyEffects()
-		end,
-	})
-	dofGroup:AddSlider({
-		Name = "Focus Distance",
-		Min = 5,
-		Max = 200,
-		Default = 30,
-		Callback = function(value)
-			fx.dofFocus = value
-			applyEffects()
-		end,
-	})
-	local blurGroup = postPanel:AddGroup()
-	blurGroup:AddToggle({
-		Name = "Motion Blur",
-		Default = false,
-		Callback = function(value)
-			fx.motionBlur = value
-			applyEffects()
-		end,
-	})
-	blurGroup:AddSlider({
-		Name = "Strength",
-		Min = 10,
-		Max = 300,
-		Default = 100,
-		Suffix = "%",
-		Callback = function(value)
-			fx.motionStrength = value / 100
-		end,
-	})
-
-	EffectsSection:AddDropdown({
-		Name = "Filter",
-		Options = { "None", "Warm", "Cold", "Noir", "Sepia", "Vivid", "Dreamy" },
-		Default = "None",
-		Width = 120,
-		Callback = function(value)
-			fx.filter = value
-			applyEffects()
-		end,
-	})
-	EffectsSection:AddToggle({
-		Name = "Vignette",
-		Default = false,
-		Callback = function(value)
-			fx.vignette = value
-			applyVignette()
-		end,
-	}):AddSettings("Vignette"):AddGroup():AddSlider({
-		Name = "Strength",
-		Min = 10,
-		Max = 100,
-		Default = 50,
-		Suffix = "%",
-		Callback = function(value)
-			fx.vignetteStrength = value / 100
-			applyVignette()
-		end,
-	})
-	EffectsSection:AddToggle({
-		Name = "Keystrokes",
-		Icon = "keyboard",
-		Default = false,
-		Callback = function(value)
-			keystrokes.Visible = value
-		end,
-	})
-	EffectsSection:AddToggle({
-		Name = "Server Info",
-		Icon = "globe",
-		Default = false,
-		Callback = function(value)
-			serverWidget:SetVisible(value)
-		end,
-	})
-
-	local VisibilitySection = Misc:AddSection({ Name = "Visibility", Side = "Left" })
-	VisibilitySection:AddToggle({
-		Name = "Hide Name Tags",
-		Default = false,
-		Callback = function(value)
-			visibility.hideNames = value
-			applyVisibility()
-		end,
-	})
-	VisibilitySection:AddToggle({
-		Name = "Hide Other Players",
-		Icon = "eye",
-		Default = false,
-		Callback = function(value)
-			visibility.hideOthers = value
-			applyVisibility()
-		end,
-	})
-	VisibilitySection:AddToggle({
-		Name = "Hide My Accessories",
-		Default = false,
-		Callback = function(value)
-			visibility.hideAccessories = value
-		end,
-	})
-	local cloudsToggle = VisibilitySection:AddToggle({
-		Name = "Clouds",
-		Default = false,
-		Callback = function(value)
-			sky.clouds = value
-			applyClouds()
-		end,
-	})
-	cloudsToggle:AddColorpicker({
-		Default = sky.cloudColor,
-		Callback = function(value)
-			sky.cloudColor = value
-		end,
-	})
-	local cloudsGroup = cloudsToggle:AddSettings("Clouds"):AddGroup()
-	cloudsGroup:AddSlider({
-		Name = "Cover",
-		Min = 0,
-		Max = 100,
-		Default = 60,
-		Suffix = "%",
-		Callback = function(value)
-			sky.cover = value / 100
-		end,
-	})
-	cloudsGroup:AddSlider({
-		Name = "Density",
-		Min = 0,
-		Max = 100,
-		Default = 60,
-		Suffix = "%",
-		Callback = function(value)
-			sky.density = value / 100
-		end,
-	})
-	VisibilitySection:AddToggle({
-		Name = "Time Lapse",
-		Default = false,
-		Callback = function(value)
-			sky.timeLapse = value
-		end,
-	}):AddSettings("Time Lapse"):AddGroup():AddSlider({
-		Name = "Hours per Minute",
-		Min = 1,
-		Max = 120,
-		Default = 10,
-		Callback = function(value)
-			sky.timeSpeed = value
-		end,
-	})
-
-	for key, value in pairs({
-		Effects = "Эффекты",
-		["Post Effects"] = "Постэффекты",
-		Bloom = "Свечение (Bloom)",
-		Intensity = "Интенсивность",
-		["Sun Rays"] = "Солнечные лучи",
-		["Depth of Field"] = "Глубина резкости",
-		["Focus Distance"] = "Дистанция фокуса",
-		["Motion Blur"] = "Размытие в движении",
-		Filter = "Фильтр",
-		Vignette = "Виньетка",
-		Keystrokes = "Нажатия клавиш",
-		["Server Info"] = "Инфо о сервере",
-		["Server Uptime"] = "Сервер работает",
-		Visibility = "Видимость",
-		["Hide Name Tags"] = "Скрыть ники над головами",
-		["Hide Other Players"] = "Скрыть других игроков",
-		["Hide My Accessories"] = "Скрыть свои аксессуары",
-		Clouds = "Облака",
-		Cover = "Покрытие",
-		Density = "Плотность",
-		["Time Lapse"] = "Ускоренное время",
-		["Hours per Minute"] = "Часов в минуту",
-	}) do
-		RU[key] = value
-	end
-end
-
 ------------------------------ Settings ------------------------------
 -- То, что раньше было в Miscellaneous: движение, меню, конфиги.
-local SettingsTab = Window:AddTab({ Name = "Settings", Icon = "sliders" })
+local SettingsTab = Tabs["Settings"]
 
 local Movement = SettingsTab:AddSection({ Name = "Movement", Side = "Left" })
 Movement:AddToggle({ Name = "Auto Jump", Default = true })
@@ -4084,7 +2561,6 @@ end
 -- Всё локальное (видите только вы), кроме явных отправок в чат и событий синхронизации.
 -- При выключении и Unload всё возвращается как было.
 ----------------------------------------------------------------------
-Window:AddCategory("Extras")
 
 -- Общие помощники для блоков Extras.
 local Util = {}
@@ -4302,7 +2778,8 @@ do
 		Util.track(RunService.RenderStepped:Connect(function()
 			local cam = workspace.CurrentCamera
 			if cam and emitter.Enabled then
-				part.CFrame = CFrame.new(cam.CFrame.Position + Vector3.new(0, 4, 0))
+				-- высоту над камерой задаёт атрибут OffsetY (для дождя и снега выше)
+				part.CFrame = CFrame.new(cam.CFrame.Position + Vector3.new(0, part:GetAttribute("OffsetY") or 4, 0))
 			end
 		end))
 		Util.onUnload(function()
@@ -4315,7 +2792,7 @@ end
 ------------------------------ CAMERA (1–10) ------------------------------
 do
 	local UserInputService = game:GetService("UserInputService")
-	local CameraTab = Window:AddTab({ Name = "Camera", Icon = "monitor" })
+	local CameraTab = Tabs["Camera"]
 
 	local cam = {
 		smooth = false,
@@ -4387,11 +2864,9 @@ do
 			camera.CFrame = camera.CFrame * CFrame.new(0, 0, 0, -1, 0, 0, 0, 1, 0, 0, 0, 1)
 		end
 
-		-- 3 и 8: зафиксированный FOV / «рыбий глаз»
+		-- «рыбий глаз» (свой FOV задаётся в Miscellaneous → View Options)
 		if cam.fisheye then
 			camera.FieldOfView = 120
-		elseif cam.lockFov and cam.lockedFov then
-			camera.FieldOfView = cam.lockedFov
 		end
 	end)
 
@@ -4516,15 +2991,6 @@ do
 
 	local Lens = CameraTab:AddSection({ Name = "Lens", Side = "Left" })
 	Lens:AddToggle({
-		Name = "Lock FOV",
-		Default = false,
-		Callback = function(v)
-			local camera = Util.camera()
-			cam.lockedFov = v and camera and camera.FieldOfView or nil
-			cam.lockFov = v
-		end,
-	})
-	Lens:AddToggle({
 		Name = "Fisheye",
 		Default = false,
 		Callback = function(v)
@@ -4648,7 +3114,7 @@ end
 do
 	local Lighting = game:GetService("Lighting")
 	local RunService = game:GetService("RunService")
-	local GraphicsTab = Window:AddTab({ Name = "Graphics", Icon = "palette" })
+	local GraphicsTab = Tabs["Graphics"]
 
 	local g = {
 		filter = "None",
@@ -4683,6 +3149,12 @@ do
 		Horror = { tint = Color3.fromRGB(200, 215, 200), saturation = -0.6, contrast = 0.3, brightness = -0.08 },
 		Winter = { tint = Color3.fromRGB(205, 230, 255), saturation = -0.2, contrast = 0.05, brightness = 0.04 },
 		Desert = { tint = Color3.fromRGB(255, 215, 160), saturation = 0.15, contrast = 0.1, brightness = 0.02 },
+		Warm = { tint = Color3.fromRGB(255, 225, 190), saturation = 0.1, contrast = 0.05, brightness = 0 },
+		Cold = { tint = Color3.fromRGB(195, 220, 255), saturation = -0.05, contrast = 0.08, brightness = 0 },
+		Noir = { tint = Color3.new(1, 1, 1), saturation = -1, contrast = 0.35, brightness = -0.03 },
+		Sepia = { tint = Color3.fromRGB(255, 220, 170), saturation = -0.75, contrast = 0.1, brightness = 0.02 },
+		Vivid = { tint = Color3.new(1, 1, 1), saturation = 0.5, contrast = 0.15, brightness = 0 },
+		Dreamy = { tint = Color3.fromRGB(240, 215, 255), saturation = 0.15, contrast = -0.1, brightness = 0.05 },
 	}
 	local VISIONS = {
 		["Night Vision"] = { tint = Color3.fromRGB(120, 255, 120), saturation = -1, contrast = 0.2, brightness = 0.25 },
@@ -4748,6 +3220,9 @@ do
 		Petals = { color = Color3.fromRGB(255, 170, 200), size = 0.35, rate = 40, speed = 3, light = 0.2, life = 7 },
 		Leaves = { color = Color3.fromRGB(230, 140, 60), size = 0.45, rate = 35, speed = 3, light = 0, life = 7 },
 		Embers = { color = Color3.fromRGB(255, 110, 40), size = 0.18, rate = 60, speed = 4, light = 1, life = 3 },
+		-- погода (раньше была отдельным списком в Misc)
+		Snow = { color = Color3.new(1, 1, 1), size = 0.25, rate = 250, speed = 9, light = 0.4, life = 9, weather = true, spread = 25, gravity = -1, offset = 30 },
+		Rain = { color = Color3.fromRGB(170, 190, 220), size = 0.07, rate = 700, speed = 90, light = 0.2, life = 1.1, weather = true, spread = 3, gravity = 0, offset = 30, streak = true },
 	}
 	local function applyAmbient()
 		local preset = AMBIENT[g.ambientParticles]
@@ -4756,12 +3231,27 @@ do
 			ambientEmitter.Color = ColorSequence.new(preset.color)
 			ambientEmitter.Size = NumberSequence.new(preset.size)
 			ambientEmitter.Rate = preset.rate
-			ambientEmitter.Speed = NumberRange.new(preset.speed * 0.5, preset.speed)
+			ambientEmitter.Speed = NumberRange.new(preset.speed * 0.6, preset.speed)
 			ambientEmitter.LightEmission = preset.light
 			ambientEmitter.Lifetime = NumberRange.new(preset.life * 0.6, preset.life)
-			ambientEmitter.SpreadAngle = Vector2.new(180, 180)
-			ambientEmitter.Acceleration = Vector3.new(0, preset.speed > 2 and -0.6 or 0.2, 0)
-			ambientEmitter.RotSpeed = NumberRange.new(-60, 60)
+			ambientEmitter.Parent:SetAttribute("OffsetY", preset.offset or 4)
+			if preset.weather then
+				-- падает сверху вниз
+				ambientEmitter.EmissionDirection = Enum.NormalId.Bottom
+				ambientEmitter.SpreadAngle = Vector2.new(preset.spread, preset.spread)
+				ambientEmitter.Acceleration = Vector3.new(0, preset.gravity, 0)
+				ambientEmitter.RotSpeed = NumberRange.new(0, 0)
+			else
+				ambientEmitter.EmissionDirection = Enum.NormalId.Top
+				ambientEmitter.SpreadAngle = Vector2.new(180, 180)
+				ambientEmitter.Acceleration = Vector3.new(0, preset.speed > 2 and -0.6 or 0.2, 0)
+				ambientEmitter.RotSpeed = NumberRange.new(-60, 60)
+			end
+			pcall(function()
+				-- дождь вытягиваем в штрихи
+				ambientEmitter.Squash = NumberSequence.new(preset.streak and -3 or 0)
+				ambientEmitter.Orientation = preset.streak and Enum.ParticleOrientation.VelocityParallel or Enum.ParticleOrientation.FacingCamera
+			end)
 		end
 	end
 
@@ -4863,7 +3353,7 @@ do
 	local Color = GraphicsTab:AddSection({ Name = "Color", Side = "Left" })
 	Color:AddDropdown({
 		Name = "Filter",
-		Options = { "None", "Cyberpunk", "Vintage", "Anime", "Horror", "Winter", "Desert" },
+		Options = { "None", "Warm", "Cold", "Vivid", "Dreamy", "Noir", "Sepia", "Cyberpunk", "Vintage", "Anime", "Horror", "Winter", "Desert" },
 		Default = "None",
 		Width = 130,
 		Callback = function(v)
@@ -4949,8 +3439,8 @@ do
 		g.hazeAmount = v
 	end })
 	SkySection:AddDropdown({
-		Name = "Ambient Particles",
-		Options = { "None", "Fireflies", "Petals", "Leaves", "Embers" },
+		Name = "Weather & Particles",
+		Options = { "None", "Snow", "Rain", "Fireflies", "Petals", "Leaves", "Embers" },
 		Default = "None",
 		Width = 130,
 		Callback = function(v)
@@ -5221,7 +3711,7 @@ end
 do
 	local RunService = game:GetService("RunService")
 	local SoundService = game:GetService("SoundService")
-	local CharacterTab = Window:AddTab({ Name = "Character", Icon = "user" })
+	local CharacterTab = Tabs["Character"]
 
 	local function torso(char)
 		return char and (char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso"))
@@ -5552,23 +4042,7 @@ do
 			emitter.Lifetime = NumberRange.new(preset.life * 0.6, preset.life)
 			emitter.Color = ColorSequence.new(preset.color or fx.auraColor)
 		end
-		-- 43: радужное свечение
-		if fx.rainbow and char then
-			if not rainbowHighlight or rainbowHighlight.Parent ~= char then
-				if rainbowHighlight then
-					rainbowHighlight:Destroy()
-				end
-				rainbowHighlight = Instance.new("Highlight")
-				rainbowHighlight.Name = "NocturneRainbow"
-				rainbowHighlight.FillTransparency = 0.7
-				rainbowHighlight.Parent = char
-			end
-			local color = Color3.fromHSV((os.clock() / 4) % 1, 0.8, 1)
-			rainbowHighlight.FillColor, rainbowHighlight.OutlineColor = color, color
-		elseif rainbowHighlight then
-			rainbowHighlight:Destroy()
-			rainbowHighlight = nil
-		end
+		-- радужное свечение теперь в Character → Body → Self Highlight → Rainbow
 		-- 44: крылья и хвост
 		local wings = ensureBuilt("wings", fx.wings, buildWings)
 		if wings then
@@ -5778,9 +4252,6 @@ do
 		look.tone = v
 		applyLook()
 	end })
-	Look:AddToggle({ Name = "Rainbow Glow", Default = false, Callback = function(v)
-		fx.rainbow = v
-	end })
 
 	local Effects = CharacterTab:AddSection({ Name = "Body Effects", Side = "Right" })
 	Effects:AddDropdown({ Name = "Aura", Options = { "None", "Sparkle", "Fire", "Ice", "Electric", "Shadow" }, Default = "None", Width = 130, Callback = function(v)
@@ -5860,7 +4331,7 @@ do
 	local SoundService = game:GetService("SoundService")
 	local Stats = game:GetService("Stats")
 	local Lighting = game:GetService("Lighting")
-	local HudTab = Window:AddTab({ Name = "HUD", Icon = "list" })
+	local HudTab = Tabs["HUD"]
 
 	local ping = Instance.new("Sound")
 	ping.SoundId = "rbxasset://sounds/electronicpingshort.wav"
@@ -5928,10 +4399,15 @@ do
 	end
 	local movementWidget = Util.textWidget("MovementStats", "Movement", UDim2.fromOffset(16, 330), "jump", function()
 		local height = heightAboveGround()
+		local root = Util.root()
+		local velocity = root and root.AssemblyLinearVelocity or Vector3.zero
+		local position = root and root.Position or Vector3.zero
 		return {
+			Library:Translate("Speed") .. ": " .. math.floor(Vector3.new(velocity.X, 0, velocity.Z).Magnitude + 0.5) .. " st/s",
+			string.format("XYZ: %d, %d, %d", math.floor(position.X), math.floor(position.Y), math.floor(position.Z)),
+			Library:Translate("Height") .. ": " .. (height and string.format("%.1f st", height) or "—"),
 			Library:Translate("Jumps") .. ": " .. stats.jumps,
 			Library:Translate("Distance") .. ": " .. math.floor(stats.distance) .. " st",
-			Library:Translate("Height") .. ": " .. (height and string.format("%.1f st", height) or "—"),
 		}
 	end)
 
@@ -6162,14 +4638,7 @@ do
 	end))
 
 	-- 62: темы меню и радужная рамка
-	local THEMES = {
-		Blue = Color3.fromRGB(100, 133, 247),
-		Crimson = Color3.fromRGB(232, 64, 84),
-		Mint = Color3.fromRGB(80, 210, 160),
-		Gold = Color3.fromRGB(236, 180, 70),
-		Violet = Color3.fromRGB(160, 100, 250),
-		Rose = Color3.fromRGB(240, 110, 170),
-	}
+	-- цвет и пресеты акцента — в меню профиля (Style); здесь только радужный режим
 	local rainbowMenu = false
 	Util.loop(0.15, function()
 		if rainbowMenu then
@@ -6316,10 +4785,6 @@ do
 	end })
 
 	local MenuLook = HudTab:AddSection({ Name = "Menu Look", Side = "Right" })
-	MenuLook:AddDropdown({ Name = "Theme", Options = { "Blue", "Crimson", "Mint", "Gold", "Violet", "Rose" }, Default = "Blue", Width = 120, Callback = function(v)
-		rainbowMenu = false
-		Library:SetAccent(THEMES[v])
-	end })
 	MenuLook:AddToggle({ Name = "Rainbow Accent", Default = false, Callback = function(v)
 		rainbowMenu = v
 	end })
@@ -6339,15 +4804,6 @@ do
 		applyMenuLook()
 	end })
 	MenuLook:AddDropdown({ Name = "Font", Options = { "Default", "SourceSans", "Arial", "Ubuntu", "Code", "Highway" }, Default = "Default", Width = 120, Callback = applyFont })
-	local previousScale = nil
-	MenuLook:AddToggle({ Name = "Compact Mode", Default = false, Callback = function(v)
-		if v then
-			previousScale = Library.Settings.MenuScale
-			Window:SetMenuScale("75%")
-		else
-			Window:SetMenuScale(previousScale or "Auto")
-		end
-	end })
 
 	Util.tr({
 		HUD = "Интерфейс",
@@ -6400,7 +4856,7 @@ end
 do
 	local SoundService = game:GetService("SoundService")
 	local RunService = game:GetService("RunService")
-	local AudioTab = Window:AddTab({ Name = "Audio", Icon = "bars" })
+	local AudioTab = Tabs["Audio"]
 
 	local audio = {
 		eq = false,
@@ -6658,7 +5114,7 @@ end
 do
 	local TeleportService = game:GetService("TeleportService")
 	local PlayersService = game:GetService("Players")
-	local SocialTab = Window:AddTab({ Name = "Social", Icon = "globe" })
+	local SocialTab = Tabs["Social"]
 	local localPlayer = Util.player
 
 	local function jobId()
@@ -6847,6 +5303,54 @@ do
 	end
 
 	local Servers = SocialTab:AddSection({ Name = "Servers", Side = "Right" })
+	-- перезайти, случайный сервер, автоперезаход (раньше были в Misc → Server)
+	Servers:AddButton({ Name = "Rejoin Server", Callback = function()
+		Util.notify("Server", "Rejoining...")
+		local ok = pcall(function()
+			if game.JobId ~= "" then
+				TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, localPlayer)
+			else
+				TeleportService:Teleport(game.PlaceId, localPlayer)
+			end
+		end)
+		if not ok then
+			Util.notify("Server", "Rejoin failed.")
+		end
+	end })
+	Servers:AddButton({ Name = "Server Hop", Callback = function()
+		task.spawn(function()
+			local ok, body = pcall(function()
+				return game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?limit=100")
+			end)
+			local data = ok and Util.unjson(body)
+			local list = {}
+			for _, server in ipairs(data and data.data or {}) do
+				if server.id ~= game.JobId and (server.playing or 0) < (server.maxPlayers or 0) then
+					table.insert(list, server)
+				end
+			end
+			if #list == 0 then
+				Util.notify("Server", "No other servers found.")
+				return
+			end
+			local pick = list[math.random(1, #list)]
+			pcall(function()
+				TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, localPlayer)
+			end)
+		end)
+	end })
+	local autoRejoin = false
+	Util.track(game:GetService("GuiService").ErrorMessageChanged:Connect(function(message)
+		if autoRejoin and message ~= "" then
+			task.wait(2)
+			pcall(function()
+				TeleportService:Teleport(game.PlaceId, localPlayer)
+			end)
+		end
+	end))
+	Servers:AddToggle({ Name = "Auto Rejoin", Default = false, Callback = function(v)
+		autoRejoin = v
+	end })
 	-- 84: фильтр серверов
 	Servers:AddDropdown({ Name = "Server Filter", Options = { "Lowest Ping", "Most Players", "Least Players" }, Default = "Lowest Ping", Width = 130, Flag = "nocturne_server_filter" })
 	Servers:AddButton({ Name = "Join Filtered Server", Callback = function()
@@ -6895,11 +5399,28 @@ do
 	Servers:AddToggle({ Name = "Retry When Full", Default = false, Callback = function(v)
 		retryFull = v
 	end })
-	-- 86: ссылка на этот сервер
-	Servers:AddButton({ Name = "Copy Server Link", Callback = function()
+	-- ссылки и вход по ID — отдельная секция, чтобы «Сервера» не разрастались
+	local Links = SocialTab:AddSection({ Name = "Links", Side = "Left" })
+	Links:AddButton({ Name = "Copy Server Link", Callback = function()
 		if Util.clip("roblox://experiences/start?placeId=" .. game.PlaceId .. "&gameInstanceId=" .. game.JobId) then
 			Util.notify("Server", "Server link copied.")
 		end
+	end })
+	Links:AddButton({ Name = "Copy Game Link", Callback = function()
+		if Util.clip("https://www.roblox.com/games/" .. game.PlaceId) then
+			Util.notify("Server", "Game link copied.")
+		end
+	end })
+	local placeBox = Links:AddTextbox({ Name = "Place ID", Placeholder = "123456", Width = 120 })
+	Links:AddButton({ Name = "Join Place", Callback = function()
+		local placeId = tonumber(string.match(placeBox:Get(), "%d+"))
+		if not placeId then
+			Util.notify("Server", "Enter a place ID.")
+			return
+		end
+		pcall(function()
+			TeleportService:Teleport(placeId, localPlayer)
+		end)
 	end })
 	-- 83: история
 	local historyDropdown = Servers:AddDropdown({ Name = "Server History", Options = {}, AllowNone = true, Width = 150 })
@@ -6927,8 +5448,8 @@ do
 		pcall(lastTeleport)
 	end })
 	-- 87: приватные сервера — храним ссылки
-	local privateBox = Servers:AddTextbox({ Name = "Private Link", Placeholder = "https://...", Width = 150 })
-	Servers:AddButton({ Name = "Save Private Link", Callback = function()
+	local privateBox = Links:AddTextbox({ Name = "Private Link", Placeholder = "https://...", Width = 150 })
+	Links:AddButton({ Name = "Save Private Link", Callback = function()
 		local link = privateBox:Get()
 		if link ~= "" then
 			table.insert(favorites.private, link)
@@ -6936,7 +5457,7 @@ do
 			Util.notify("Server", "Link saved.")
 		end
 	end })
-	Servers:AddButton({ Name = "Copy Saved Links", Callback = function()
+	Links:AddButton({ Name = "Copy Saved Links", Callback = function()
 		Util.clip(table.concat(favorites.private, "\n"))
 	end })
 	-- 88: время в этой игре
@@ -7243,6 +5764,11 @@ do
 
 	Util.tr({
 		Social = "Общение",
+		Links = "Ссылки",
+		["Join Place"] = "Зайти в место",
+		["Place ID"] = "ID места",
+		["Enter a place ID."] = "Введите ID места.",
+		["Weather & Particles"] = "Погода и частицы",
 		["Chat Tools"] = "Чат",
 		Phrase = "Фраза",
 		["Send Phrase"] = "Отправить фразу",
@@ -7315,7 +5841,7 @@ do
 	local RunService = game:GetService("RunService")
 	local LogService = game:GetService("LogService")
 	local Stats = game:GetService("Stats")
-	local ToolsTab = Window:AddTab({ Name = "Tools", Icon = "terminal" })
+	local ToolsTab = Tabs["Tools"]
 
 	------------------------- 91/92/94: просмотрщик объектов -------------------------
 	local explorer = Util.frame({ Name = "NocturneExplorer", BackgroundColor3 = Color3.fromRGB(20, 21, 27), Position = UDim2.new(0.5, -170, 0.5, -200), Size = UDim2.fromOffset(340, 400), Visible = false, Parent = Window.widgetLayer })
@@ -7593,7 +6119,7 @@ end
 ------------------------- МЕНЮ: профили, поиск, бинды (101–110) -------------------------
 do
 	local UserInputService = game:GetService("UserInputService")
-	local MenuTab = Window:AddTab({ Name = "Favorites", Icon = "list" })
+	local MenuTab = Tabs["Shortcuts"]
 
 	-- найти переключатель по имени (как он подписан в меню)
 	local function findToggle(name)
@@ -7829,6 +6355,618 @@ do
 		["Instantly hides the menu and every widget. Press again to show."] = "Мгновенно прячет меню и все плашки. Нажмите ещё раз, чтобы показать.",
 		["Replies with your text when someone writes your name (max once per 15 s)."] = "Отвечает вашим текстом, когда пишут ваш ник (не чаще раза в 15 с).",
 		["Hides chat messages with these words (new chat only)."] = "Скрывает сообщения с этими словами (только новый чат).",
+	})
+end
+
+------------------------- EXTRAS: перенесено из Misc -------------------------
+-- Персонаж, камера, сессия, атмосфера, постэффекты, оверлеи и видимость.
+-- Раньше эти секции были во вкладке Miscellaneous; дубли с вкладками Extras убраны.
+do
+	local RunService = game:GetService("RunService")
+	local Lighting = game:GetService("Lighting")
+	local UserInputService = game:GetService("UserInputService")
+	local PlayersService = game:GetService("Players")
+	local localPlayer = Util.player
+
+	------------------------------ тело (Character) ------------------------------
+	local body = {
+		showInFirstPerson = false,
+		transparency = false,
+		transparencyValue = 0.5,
+		highlight = false,
+		highlightRainbow = false,
+		highlightColor = Color3.fromRGB(100, 133, 247),
+		trail = false,
+		trailColor = Color3.fromRGB(240, 100, 160),
+		hideAccessories = false,
+		bob = false,
+		bobStrength = 1,
+	}
+	local highlightObject, trailObjects = nil, nil
+	local bobTime = 0
+
+	local function isAccessoryPart(part)
+		return part:FindFirstAncestorWhichIsA("Accoutrement") ~= nil
+	end
+
+	Util.render(Enum.RenderPriority.Camera.Value + 2, function(dt)
+		local char = Util.char()
+		local cam = Util.camera()
+		if not (char and cam) then
+			return
+		end
+		local head = char:FindFirstChild("Head")
+		local firstPerson = head and (cam.CFrame.Position - head.Position).Magnitude < 1.5
+
+		if body.transparency or body.hideAccessories or (body.showInFirstPerson and firstPerson) then
+			for _, part in ipairs(char:GetDescendants()) do
+				if part:IsA("BasePart") then
+					local accessory = isAccessoryPart(part)
+					if body.hideAccessories and accessory then
+						part.LocalTransparencyModifier = 1
+					elseif body.showInFirstPerson and firstPerson then
+						-- тело видно, голова и аксессуары скрыты, чтобы не мешали обзору
+						part.LocalTransparencyModifier = (part.Name == "Head" or accessory) and 1 or 0
+					elseif body.transparency then
+						part.LocalTransparencyModifier = body.transparencyValue
+					end
+				end
+			end
+		end
+
+		-- покачивание камеры при ходьбе
+		local humanoid = char:FindFirstChildOfClass("Humanoid")
+		if body.bob and humanoid and humanoid.MoveDirection.Magnitude > 0.1 then
+			bobTime += dt * 9
+			local s = body.bobStrength
+			cam.CFrame = cam.CFrame
+				* CFrame.new(math.sin(bobTime) * 0.06 * s, math.abs(math.cos(bobTime)) * 0.09 * s, 0)
+				* CFrame.Angles(0, 0, math.sin(bobTime) * 0.006 * s)
+		end
+
+		-- радужная подсветка меняет цвет плавно, каждый кадр
+		if highlightObject and body.highlightRainbow then
+			local color = Color3.fromHSV((os.clock() / 4) % 1, 0.8, 1)
+			highlightObject.FillColor, highlightObject.OutlineColor = color, color
+		end
+	end)
+
+	local function updateCharacterEffects()
+		local char = Util.char()
+		if body.highlight and char then
+			if not highlightObject or highlightObject.Parent ~= char then
+				if highlightObject then
+					highlightObject:Destroy()
+				end
+				highlightObject = Instance.new("Highlight")
+				highlightObject.Name = "NocturneHighlight"
+				highlightObject.DepthMode = Enum.HighlightDepthMode.Occluded
+				highlightObject.Parent = char
+			end
+			if not body.highlightRainbow then
+				highlightObject.FillColor = body.highlightColor
+				highlightObject.OutlineColor = body.highlightColor
+			end
+			highlightObject.FillTransparency = 0.75
+			highlightObject.OutlineTransparency = 0
+		elseif highlightObject then
+			highlightObject:Destroy()
+			highlightObject = nil
+		end
+
+		local root = Util.root()
+		if body.trail and root then
+			if not trailObjects or trailObjects.trail.Parent ~= root then
+				if trailObjects then
+					trailObjects.trail:Destroy()
+					trailObjects.a0:Destroy()
+					trailObjects.a1:Destroy()
+				end
+				local a0 = Instance.new("Attachment")
+				a0.Position = Vector3.new(0, 1, 0)
+				a0.Parent = root
+				local a1 = Instance.new("Attachment")
+				a1.Position = Vector3.new(0, -1, 0)
+				a1.Parent = root
+				local trail = Instance.new("Trail")
+				trail.Name = "NocturneTrail"
+				trail.Attachment0 = a0
+				trail.Attachment1 = a1
+				trail.Lifetime = 0.6
+				trail.LightEmission = 0.6
+				trail.Transparency = NumberSequence.new(0.2, 1)
+				trail.Parent = root
+				trailObjects = { trail = trail, a0 = a0, a1 = a1 }
+			end
+			trailObjects.trail.Color = ColorSequence.new(body.trailColor)
+		elseif trailObjects then
+			trailObjects.trail:Destroy()
+			trailObjects.a0:Destroy()
+			trailObjects.a1:Destroy()
+			trailObjects = nil
+		end
+	end
+	Util.loop(0.5, updateCharacterEffects)
+
+	------------------------------ сессия (HUD) ------------------------------
+	local sessionStart = os.clock()
+	local lastInput = os.clock()
+	Util.track(UserInputService.InputBegan:Connect(function()
+		lastInput = os.clock()
+	end))
+	Util.track(UserInputService.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement then
+			lastInput = os.clock()
+		end
+	end))
+	local sessionItems = { ["Session Time"] = true, ["AFK Timer"] = true }
+	local sessionWidget = Util.textWidget("Session", "Session", UDim2.fromOffset(16, 120), "clock", function()
+		local lines = {}
+		if sessionItems["Session Time"] then
+			table.insert(lines, Library:Translate("Session Time") .. ":  " .. Util.clock(os.clock() - sessionStart))
+		end
+		if sessionItems["AFK Timer"] then
+			-- Roblox кикает после 20 минут без действий
+			table.insert(lines, Library:Translate("AFK Kick In") .. ":  " .. Util.clock(1200 - (os.clock() - lastInput)))
+		end
+		return lines
+	end)
+
+	local friendAlerts = false
+	Util.track(PlayersService.PlayerAdded:Connect(function(player)
+		if not friendAlerts then
+			return
+		end
+		local ok, isFriend = pcall(function()
+			return localPlayer:IsFriendsWith(player.UserId)
+		end)
+		if ok and isFriend then
+			Util.notify("Friends", player.DisplayName .. " " .. Library:Translate("joined the server"))
+		end
+	end))
+
+	------------------------------ оверлей клавиш (HUD) ------------------------------
+	local keystrokes = Util.frame({ Name = "NocturneKeystrokes", BackgroundTransparency = 1, Position = UDim2.new(1, -190, 1, -260), Size = UDim2.fromOffset(170, 180), Visible = false, Parent = Window.widgetLayer })
+	Window:_draggable(keystrokes)
+	Window:_widgetScaleTarget(keystrokes)
+	local keyViews, clicks = {}, {}
+	local function keyBox(name, text, x, y, w, h)
+		local box = Util.frame({ Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h), BackgroundColor3 = Color3.fromRGB(13, 14, 19), BackgroundTransparency = 0.35, Parent = keystrokes })
+		Util.round(box, UDim.new(0, 8))
+		local label = Util.text({ Size = UDim2.fromScale(1, 1), TextSize = 14, Text = text, Parent = box })
+		keyViews[name] = { box = box, label = label }
+		return label
+	end
+	keyBox("W", "W", 60, 0, 50, 50)
+	keyBox("A", "A", 5, 55, 50, 50)
+	keyBox("S", "S", 60, 55, 50, 50)
+	keyBox("D", "D", 115, 55, 50, 50)
+	keyBox("Space", "SPACE", 5, 110, 160, 30)
+	local lmbLabel = keyBox("LMB", "LMB", 5, 145, 78, 34)
+	keyBox("RMB", "RMB", 87, 145, 78, 34)
+	local function isDown(name)
+		if name == "LMB" then
+			return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+		elseif name == "RMB" then
+			return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+		end
+		return UserInputService:IsKeyDown(Enum.KeyCode[name])
+	end
+	Util.track(UserInputService.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			table.insert(clicks, os.clock())
+		end
+	end))
+	Util.track(RunService.RenderStepped:Connect(function()
+		if not keystrokes.Visible then
+			return
+		end
+		for name, view in pairs(keyViews) do
+			local down = isDown(name)
+			view.box.BackgroundColor3 = down and Library.Theme.Accent or Color3.fromRGB(13, 14, 19)
+			view.box.BackgroundTransparency = down and 0.1 or 0.35
+		end
+		local now = os.clock()
+		while clicks[1] and now - clicks[1] > 1 do
+			table.remove(clicks, 1)
+		end
+		lmbLabel.Text = #clicks > 0 and (#clicks .. " CPS") or "LMB"
+	end))
+
+	------------------------------ инфо о сервере (HUD) ------------------------------
+	local placeName = nil
+	task.spawn(function()
+		local ok, info = pcall(function()
+			return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
+		end)
+		placeName = ok and info and info.Name or nil
+	end)
+	local serverWidget = Util.textWidget("ServerInfo", "Server Info", UDim2.fromOffset(16, 300), "globe", function()
+		local lines = {}
+		if placeName then
+			table.insert(lines, placeName)
+		end
+		table.insert(lines, Library:Translate("Players") .. ":  " .. #PlayersService:GetPlayers() .. " / " .. PlayersService.MaxPlayers)
+		table.insert(lines, Library:Translate("Server Uptime") .. ":  " .. Util.clock(workspace.DistributedGameTime))
+		local ok, ping = pcall(function()
+			return localPlayer:GetNetworkPing()
+		end)
+		if ok and type(ping) == "number" then
+			table.insert(lines, "Ping:  " .. math.floor(ping * 1000 + 0.5) .. " ms")
+		end
+		return lines
+	end)
+
+	------------------------------ атмосфера (Graphics) ------------------------------
+	-- Пресеты неба без картинок-ассетов: время суток, атмосфера, звёзды, свет окружения.
+	local SKY_PRESETS = {
+		Sunset = { time = 17.9, ambient = Color3.fromRGB(150, 110, 100), stars = 0, atmosphere = { Color = Color3.fromRGB(255, 170, 110), Decay = Color3.fromRGB(120, 60, 90), Density = 0.32, Haze = 2.2, Glare = 1.5, Offset = 0.1 } },
+		["Golden Hour"] = { time = 6.4, ambient = Color3.fromRGB(170, 140, 100), stars = 0, atmosphere = { Color = Color3.fromRGB(255, 210, 140), Decay = Color3.fromRGB(150, 110, 70), Density = 0.28, Haze = 1.8, Glare = 1, Offset = 0.15 } },
+		Night = { time = 0, ambient = Color3.fromRGB(60, 70, 110), stars = 4000, atmosphere = { Color = Color3.fromRGB(40, 50, 90), Decay = Color3.fromRGB(20, 20, 40), Density = 0.3, Haze = 1, Glare = 0, Offset = 0 } },
+		Space = { time = 0, ambient = Color3.fromRGB(80, 80, 120), stars = 10000, atmosphere = { Color = Color3.fromRGB(10, 10, 20), Decay = Color3.fromRGB(0, 0, 0), Density = 0, Haze = 0, Glare = 0, Offset = 0 } },
+		Neon = { time = 0, ambient = Color3.fromRGB(140, 80, 200), stars = 3000, atmosphere = { Color = Color3.fromRGB(200, 80, 255), Decay = Color3.fromRGB(60, 20, 120), Density = 0.35, Haze = 2.5, Glare = 2, Offset = 0.2 } },
+		["Foggy Morning"] = { time = 7, ambient = Color3.fromRGB(160, 165, 175), stars = 0, atmosphere = { Color = Color3.fromRGB(200, 210, 225), Decay = Color3.fromRGB(150, 160, 180), Density = 0.45, Haze = 3, Glare = 0.3, Offset = 0 } },
+	}
+	local world = { sky = "Default", simpleWater = false, clouds = false, cover = 0.6, density = 0.6, cloudColor = Color3.new(1, 1, 1), timeLapse = false, timeSpeed = 10 }
+
+	local function applySky()
+		local preset = SKY_PRESETS[world.sky]
+		if not preset then
+			Util.restore("skyp.")
+			Util.effect("PresetAtmosphere", "Atmosphere", Lighting, false)
+			Util.effect("PresetSky", "Sky", Lighting, false)
+			return
+		end
+		Util.set("skyp.Clock", Lighting, "ClockTime", preset.time)
+		Util.set("skyp.Ambient", Lighting, "Ambient", preset.ambient)
+		Util.set("skyp.Outdoor", Lighting, "OutdoorAmbient", preset.ambient)
+		local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere") or Util.effect("PresetAtmosphere", "Atmosphere", Lighting, true)
+		for prop, value in pairs(preset.atmosphere) do
+			Util.set("skyp.atm." .. prop, atmosphere, prop, value)
+		end
+		local sky = Lighting:FindFirstChildOfClass("Sky") or Util.effect("PresetSky", "Sky", Lighting, true)
+		Util.set("skyp.Stars", sky, "StarCount", preset.stars)
+	end
+
+	local function applyWater()
+		local terrain = workspace.Terrain
+		if world.simpleWater then
+			Util.set("water.Wave", terrain, "WaterWaveSize", 0)
+			Util.set("water.Speed", terrain, "WaterWaveSpeed", 0)
+			Util.set("water.Reflect", terrain, "WaterReflectance", 0)
+			Util.set("water.Transparency", terrain, "WaterTransparency", 0.6)
+		else
+			Util.restore("water.")
+		end
+	end
+
+	local function applyClouds()
+		local terrain = workspace.Terrain
+		if world.clouds then
+			local clouds = terrain:FindFirstChildOfClass("Clouds") or Util.effect("Clouds", "Clouds", terrain, true)
+			Util.set("clouds.Enabled", clouds, "Enabled", true)
+			Util.set("clouds.Cover", clouds, "Cover", world.cover)
+			Util.set("clouds.Density", clouds, "Density", world.density)
+			Util.set("clouds.Color", clouds, "Color", world.cloudColor)
+		else
+			Util.restore("clouds.")
+			Util.effect("Clouds", "Clouds", terrain, false)
+		end
+	end
+
+	-- ускоренная смена дня и ночи: «часов в минуту»
+	Util.track(RunService.Heartbeat:Connect(function(dt)
+		if world.timeLapse then
+			Lighting.ClockTime = (Lighting.ClockTime + dt * world.timeSpeed / 60) % 24
+		end
+	end))
+
+	------------------------------ постэффекты (Graphics) ------------------------------
+	local fx = { bloom = false, bloomIntensity = 1, sunRays = false, dof = false, dofFocus = 30, motionBlur = false, motionStrength = 1, vignette = false, vignetteStrength = 0.5 }
+	local function applyEffects()
+		local cam = Util.camera()
+		local bloom = Util.effect("Bloom", "BloomEffect", Lighting, fx.bloom)
+		if bloom then
+			bloom.Intensity, bloom.Size, bloom.Threshold = fx.bloomIntensity, 30, 0.9
+		end
+		local rays = Util.effect("SunRays", "SunRaysEffect", Lighting, fx.sunRays)
+		if rays then
+			rays.Intensity, rays.Spread = 0.12, 0.8
+		end
+		local dof = Util.effect("DepthOfField", "DepthOfFieldEffect", Lighting, fx.dof)
+		if dof then
+			dof.FocusDistance, dof.InFocusRadius, dof.FarIntensity, dof.NearIntensity = fx.dofFocus, 20, 0.6, 0.3
+		end
+		Util.effect("MotionBlur", "BlurEffect", cam, fx.motionBlur)
+	end
+	local lastLook = nil
+	Util.track(RunService.RenderStepped:Connect(function(dt)
+		local cam = Util.camera()
+		local blur = cam and cam:FindFirstChild("NocturneMotionBlur")
+		if not blur then
+			lastLook = nil
+			return
+		end
+		local look = cam.CFrame.LookVector
+		if lastLook then
+			local angle = math.acos(math.clamp(look:Dot(lastLook), -1, 1))
+			local target = math.clamp(angle / math.max(dt, 1 / 240) * 2.2 * fx.motionStrength, 0, 14)
+			blur.Size = blur.Size + (target - blur.Size) * math.clamp(dt * 12, 0, 1)
+		end
+		lastLook = look
+	end))
+
+	local vignetteFrame = Util.frame({ Name = "NocturneVignette", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Visible = false, ZIndex = 0, Parent = Window.widgetLayer })
+	local vignetteEdges = {}
+	for _, side in ipairs({
+		{ UDim2.fromScale(0, 0), UDim2.fromScale(1, 0.35), 90 },
+		{ UDim2.fromScale(0, 0.65), UDim2.fromScale(1, 0.35), 270 },
+		{ UDim2.fromScale(0, 0), UDim2.fromScale(0.3, 1), 0 },
+		{ UDim2.fromScale(0.7, 0), UDim2.fromScale(0.3, 1), 180 },
+	}) do
+		local edge = Util.frame({ BackgroundColor3 = Color3.new(0, 0, 0), Position = side[1], Size = side[2], Parent = vignetteFrame })
+		local gradient = Instance.new("UIGradient")
+		gradient.Rotation = side[3]
+		gradient.Parent = edge
+		table.insert(vignetteEdges, gradient)
+	end
+	local function applyVignette()
+		vignetteFrame.Visible = fx.vignette
+		for _, gradient in ipairs(vignetteEdges) do
+			gradient.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1 - fx.vignetteStrength * 0.8),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+		end
+	end
+
+	------------------------------ видимость (Graphics) ------------------------------
+	local visibility = { hideNames = false, hideOthers = false }
+	local savedNameDisplay = setmetatable({}, { __mode = "k" })
+	local function applyVisibility()
+		for _, player in ipairs(PlayersService:GetPlayers()) do
+			local char = player.Character
+			if char and player ~= localPlayer then
+				local humanoid = char:FindFirstChildOfClass("Humanoid")
+				if humanoid then
+					if visibility.hideNames then
+						if savedNameDisplay[humanoid] == nil then
+							savedNameDisplay[humanoid] = humanoid.DisplayDistanceType
+						end
+						humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+					elseif savedNameDisplay[humanoid] ~= nil then
+						humanoid.DisplayDistanceType = savedNameDisplay[humanoid]
+						savedNameDisplay[humanoid] = nil
+					end
+				end
+				for _, part in ipairs(char:GetDescendants()) do
+					if part:IsA("BasePart") or part:IsA("Decal") then
+						part.LocalTransparencyModifier = visibility.hideOthers and 1 or 0
+					end
+				end
+			end
+		end
+	end
+
+	Util.loop(0.5, function()
+		pcall(applySky)
+		pcall(applyWater)
+		pcall(applyClouds)
+		pcall(applyEffects)
+		pcall(applyVisibility)
+	end)
+
+	Util.onUnload(function()
+		for key, value in pairs(body) do
+			if type(value) == "boolean" then
+				body[key] = false
+			end
+		end
+		updateCharacterEffects()
+		local char = Util.char()
+		if char then
+			for _, part in ipairs(char:GetDescendants()) do
+				if part:IsA("BasePart") then
+					part.LocalTransparencyModifier = 0
+				end
+			end
+		end
+		world.sky, world.simpleWater, world.clouds, world.timeLapse = "Default", false, false, false
+		applySky()
+		applyClouds()
+		visibility.hideNames, visibility.hideOthers = false, false
+		applyVisibility()
+		keystrokes:Destroy()
+	end)
+
+	-------------------------------- интерфейс --------------------------------
+	-- Character → Body
+	local Body = Tabs.Character:AddSection({ Name = "Body", Side = "Left" })
+	Body:AddToggle({ Name = "Body in First Person", Icon = "user", Default = false, Callback = function(v)
+		body.showInFirstPerson = v
+	end })
+	Body:AddToggle({ Name = "Self Transparency", Default = false, Callback = function(v)
+		body.transparency = v
+	end }):AddSettings("Self Transparency"):AddGroup():AddSlider({ Name = "Value", Min = 0, Max = 90, Default = 50, Suffix = "%", Callback = function(v)
+		body.transparencyValue = v / 100
+	end })
+	local highlight = Body:AddToggle({ Name = "Self Highlight", Default = false, Callback = function(v)
+		body.highlight = v
+		updateCharacterEffects()
+	end })
+	highlight:AddColorpicker({ Default = body.highlightColor, Callback = function(v)
+		body.highlightColor = v
+	end })
+	highlight:AddSettings("Self Highlight"):AddGroup():AddToggle({ Name = "Rainbow", Default = false, Callback = function(v)
+		body.highlightRainbow = v
+	end })
+	Body:AddToggle({ Name = "Trail", Default = false, Callback = function(v)
+		body.trail = v
+		updateCharacterEffects()
+	end }):AddColorpicker({ Default = body.trailColor, Callback = function(v)
+		body.trailColor = v
+	end })
+	Body:AddToggle({ Name = "Hide My Accessories", Default = false, Callback = function(v)
+		body.hideAccessories = v
+	end })
+
+	-- Camera → Feel
+	local Feel = Tabs.Camera:AddSection({ Name = "Feel", Side = "Left" })
+	Feel:AddToggle({ Name = "Camera Bob", Default = false, Callback = function(v)
+		body.bob = v
+	end }):AddSettings("Camera Bob"):AddGroup():AddSlider({ Name = "Strength", Min = 10, Max = 300, Default = 100, Suffix = "%", Callback = function(v)
+		body.bobStrength = v / 100
+	end })
+
+	-- HUD → Session & Overlays
+	local Session = Tabs.HUD:AddSection({ Name = "Session", Side = "Left" })
+	local sessionToggle = Session:AddToggle({ Name = "Session Panel", Icon = "clock", Default = false, Callback = function(v)
+		sessionWidget:SetVisible(v)
+	end })
+	sessionToggle:AddSettings("Session Panel"):AddGroup():AddChecklist({
+		Options = { "Session Time", "AFK Timer" },
+		Default = { "Session Time", "AFK Timer" },
+		Callback = function(selected)
+			sessionItems = {}
+			for _, name in ipairs(selected) do
+				sessionItems[name] = true
+			end
+		end,
+	})
+	Session:AddToggle({ Name = "Server Info", Icon = "globe", Default = false, Callback = function(v)
+		serverWidget:SetVisible(v)
+	end })
+	Session:AddToggle({ Name = "Keystrokes", Icon = "keyboard", Default = false, Callback = function(v)
+		keystrokes.Visible = v
+	end })
+	Session:AddToggle({ Name = "Friend Alerts", Icon = "user", Default = false, Callback = function(v)
+		friendAlerts = v
+	end })
+
+	-- Graphics → Atmosphere
+	local Atmosphere = Tabs.Graphics:AddSection({ Name = "Atmosphere", Side = "Left" })
+	Atmosphere:AddDropdown({
+		Name = "Sky Preset",
+		Options = { "Default", "Sunset", "Golden Hour", "Night", "Space", "Neon", "Foggy Morning" },
+		Default = "Default",
+		Width = 130,
+		Callback = function(v)
+			world.sky = v
+			applySky()
+		end,
+	})
+	local clouds = Atmosphere:AddToggle({ Name = "Clouds", Default = false, Callback = function(v)
+		world.clouds = v
+		applyClouds()
+	end })
+	clouds:AddColorpicker({ Default = world.cloudColor, Callback = function(v)
+		world.cloudColor = v
+	end })
+	local cloudsGroup = clouds:AddSettings("Clouds"):AddGroup()
+	cloudsGroup:AddSlider({ Name = "Cover", Min = 0, Max = 100, Default = 60, Suffix = "%", Callback = function(v)
+		world.cover = v / 100
+	end })
+	cloudsGroup:AddSlider({ Name = "Density", Min = 0, Max = 100, Default = 60, Suffix = "%", Callback = function(v)
+		world.density = v / 100
+	end })
+	Atmosphere:AddToggle({ Name = "Time Lapse", Default = false, Callback = function(v)
+		world.timeLapse = v
+	end }):AddSettings("Time Lapse"):AddGroup():AddSlider({ Name = "Hours per Minute", Min = 1, Max = 120, Default = 10, Callback = function(v)
+		world.timeSpeed = v
+	end })
+	Atmosphere:AddToggle({ Name = "Simple Water", Default = false, Callback = function(v)
+		world.simpleWater = v
+		applyWater()
+	end })
+
+	-- Graphics → Post Effects
+	local Post = Tabs.Graphics:AddSection({ Name = "Post Effects", Side = "Left" })
+	local bloom = Post:AddToggle({ Name = "Bloom", Default = false, Callback = function(v)
+		fx.bloom = v
+		applyEffects()
+	end })
+	bloom:AddSettings("Bloom"):AddGroup():AddSlider({ Name = "Intensity", Min = 10, Max = 300, Default = 100, Suffix = "%", Callback = function(v)
+		fx.bloomIntensity = v / 100
+		applyEffects()
+	end })
+	Post:AddToggle({ Name = "Sun Rays", Default = false, Callback = function(v)
+		fx.sunRays = v
+		applyEffects()
+	end })
+	Post:AddToggle({ Name = "Depth of Field", Default = false, Callback = function(v)
+		fx.dof = v
+		applyEffects()
+	end }):AddSettings("Depth of Field"):AddGroup():AddSlider({ Name = "Focus Distance", Min = 5, Max = 200, Default = 30, Callback = function(v)
+		fx.dofFocus = v
+		applyEffects()
+	end })
+	Post:AddToggle({ Name = "Motion Blur", Default = false, Callback = function(v)
+		fx.motionBlur = v
+		applyEffects()
+	end }):AddSettings("Motion Blur"):AddGroup():AddSlider({ Name = "Strength", Min = 10, Max = 300, Default = 100, Suffix = "%", Callback = function(v)
+		fx.motionStrength = v / 100
+	end })
+	Post:AddToggle({ Name = "Vignette", Default = false, Callback = function(v)
+		fx.vignette = v
+		applyVignette()
+	end }):AddSettings("Vignette"):AddGroup():AddSlider({ Name = "Strength", Min = 10, Max = 100, Default = 50, Suffix = "%", Callback = function(v)
+		fx.vignetteStrength = v / 100
+		applyVignette()
+	end })
+
+	-- Graphics → Visibility
+	local Visibility = Tabs.Graphics:AddSection({ Name = "Visibility", Side = "Right" })
+	Visibility:AddToggle({ Name = "Hide Name Tags", Default = false, Callback = function(v)
+		visibility.hideNames = v
+		applyVisibility()
+	end })
+	Visibility:AddToggle({ Name = "Hide Other Players", Icon = "eye", Default = false, Callback = function(v)
+		visibility.hideOthers = v
+		applyVisibility()
+	end })
+
+	Util.tr({
+		Body = "Тело",
+		["Body in First Person"] = "Тело от первого лица",
+		["Self Transparency"] = "Прозрачность себя",
+		["Self Highlight"] = "Подсветка себя",
+		Rainbow = "Радужная",
+		Trail = "След",
+		["Hide My Accessories"] = "Скрыть свои аксессуары",
+		Feel = "Ощущения",
+		["Camera Bob"] = "Покачивание камеры",
+		Strength = "Сила",
+		Session = "Сессия",
+		["Session Panel"] = "Панель сессии",
+		["Session Time"] = "Время в игре",
+		["AFK Timer"] = "Таймер АФК",
+		["AFK Kick In"] = "Кик за АФК через",
+		["Server Info"] = "Инфо о сервере",
+		["Server Uptime"] = "Сервер работает",
+		Keystrokes = "Нажатия клавиш",
+		["Friend Alerts"] = "Уведомления о друзьях",
+		Friends = "Друзья",
+		["joined the server"] = "зашёл на сервер",
+		Atmosphere = "Атмосфера",
+		["Sky Preset"] = "Небо",
+		Clouds = "Облака",
+		Cover = "Покрытие",
+		Density = "Плотность",
+		["Time Lapse"] = "Ускоренное время",
+		["Hours per Minute"] = "Часов в минуту",
+		["Simple Water"] = "Простая вода",
+		["Post Effects"] = "Постэффекты",
+		Bloom = "Свечение (Bloom)",
+		Intensity = "Интенсивность",
+		["Sun Rays"] = "Солнечные лучи",
+		["Depth of Field"] = "Глубина резкости",
+		["Focus Distance"] = "Дистанция фокуса",
+		["Motion Blur"] = "Размытие в движении",
+		Vignette = "Виньетка",
+		Visibility = "Видимость",
+		["Hide Name Tags"] = "Скрыть ники над головами",
+		["Hide Other Players"] = "Скрыть других игроков",
+		Shortcuts = "Быстрый доступ",
 	})
 end
 
