@@ -984,150 +984,623 @@ local EventLog = Window:CreateEventLog({ Position = UDim2.fromOffset(16, 56), Pr
 local SyncWidget = Window:CreateSyncList({ Position = UDim2.fromOffset(16, 600) })
 SyncWidget:SetDynamic(true)
 
--------------------------------- VIEW --------------------------------
-local ViewSection = Misc:AddSection({ Name = "View", Side = "Left" })
+-------------------------------- VIEW / HUD / WORLD ---------------------
+-- Рабочие локальные функции: меняется только то, что видите вы.
+-- Всё, что меню меняет, запоминается и возвращается при выключении и при Unload.
+do
+	local RunService = game:GetService("RunService")
+	local Lighting = game:GetService("Lighting")
+	local StarterGui = game:GetService("StarterGui")
+	local localPlayer = game:GetService("Players").LocalPlayer
 
-local viewOptions = ViewSection:AddSubmenu({ Name = "View Options" })
-local viewFov = viewOptions:AddGroup()
-viewFov:AddToggle({ Name = "Override FOV", Default = true })
-viewFov:AddSlider({ Name = "Value", Min = 60, Max = 130, Default = 100, Suffix = "°" })
-local viewAspect = viewOptions:AddGroup()
-viewAspect:AddToggle({ Name = "Override Aspect Ratio", Default = true })
-viewAspect:AddDropdown({ Name = "Scaling", Options = { "Vertical", "Horizontal" }, Default = "Horizontal" })
-viewAspect:AddSlider({ Name = "Value", Min = 50, Max = 200, Default = 80, Suffix = "%" })
-viewOptions:AddGroup():AddToggle({ Name = "Disable Landing Bob", Default = false })
+	local function camera()
+		return workspace.CurrentCamera
+	end
 
-local scopeOptions = ViewSection:AddSubmenu({ Name = "Scope Options" })
-local scopeFov = scopeOptions:AddGroup()
-scopeFov:AddToggle({ Name = "Override FOV", Default = true })
-scopeFov:AddSlider({ Name = "Scale (x1)", Min = 0, Max = 100, Default = 100, Suffix = "%" })
-scopeFov:AddSlider({ Name = "Scale (x2)", Min = 0, Max = 100, Default = 100, Suffix = "%" })
-local scopeOther = scopeOptions:AddGroup()
-scopeOther:AddToggle({ Name = "Instant Scope", Default = false })
-scopeOther:AddToggle({ Name = "Show Viewmodel", Default = true })
+	-- исходные значения свойств Lighting, которые мы трогали: [свойство] = значение
+	local savedLighting = {}
+	local function setLighting(prop, value)
+		if savedLighting[prop] == nil then
+			savedLighting[prop] = Lighting[prop]
+		end
+		if Lighting[prop] ~= value then
+			Lighting[prop] = value
+		end
+	end
+	local function restoreLighting(prop)
+		if savedLighting[prop] ~= nil then
+			pcall(function()
+				Lighting[prop] = savedLighting[prop]
+			end)
+			savedLighting[prop] = nil
+		end
+	end
 
-local viewmodel = ViewSection:AddSubmenu({ Name = "Viewmodel Options" })
-local vmFov = viewmodel:AddGroup()
-vmFov:AddToggle({ Name = "Override FOV", Default = false })
-vmFov:AddSlider({ Name = "Value", Min = 40, Max = 120, Default = 68 })
-local vmPosition = viewmodel:AddGroup()
-vmPosition:AddToggle({ Name = "Override Position", Default = false })
-vmPosition:AddSlider({ Name = "X", Min = -10, Max = 10, Default = 1, Decimals = 1 })
-vmPosition:AddSlider({ Name = "Y", Min = -10, Max = 10, Default = 0, Decimals = 1 })
-vmPosition:AddSlider({ Name = "Z", Min = -10, Max = 10, Default = -1, Decimals = 1 })
-local vmAngles = viewmodel:AddGroup()
-vmAngles:AddToggle({ Name = "Override Angles", Default = false })
-vmAngles:AddSlider({ Name = "Pitch", Min = -90, Max = 90, Default = 0, Suffix = "°" })
-vmAngles:AddSlider({ Name = "Yaw", Min = -90, Max = 90, Default = 0, Suffix = "°" })
-vmAngles:AddSlider({ Name = "Roll", Min = -90, Max = 90, Default = 0, Suffix = "°" })
-local vmModifiers = viewmodel:AddGroup()
-vmModifiers:AddToggle({ Name = "Override Modifiers", Default = false })
-vmModifiers:AddSlider({ Name = "Bobbing", Min = 0, Max = 100, Default = 100, Suffix = "%" })
-vmModifiers:AddSlider({ Name = "Angles Sway", Min = 0, Max = 100, Default = 100, Suffix = "%" })
-vmModifiers:AddSlider({ Name = "Velocity Sway", Min = 0, Max = 100, Default = 100, Suffix = "%" })
-vmModifiers:AddSlider({ Name = "In Air Offset", Min = 0, Max = 100, Default = 100, Suffix = "%" })
+	------------------------------ камера ------------------------------
+	local view = {
+		fov = false,
+		fovValue = 90,
+		fovSaved = nil,
+		stretch = false,
+		stretchScale = 0.75,
+		third = false,
+		thirdDistance = 12,
+		thirdSaved = nil,
+	}
 
-local perspective = ViewSection:AddSubmenu({ Name = "Perspective Options" })
-local perspectiveMain = perspective:AddGroup()
-perspectiveMain:AddToggle({ Name = "Force Third Person", Default = false }):AddKeybind({ Default = Enum.KeyCode.V })
-perspectiveMain:AddDropdown({
-	Name = "Disablers",
-	Multi = true,
-	Options = { "Close To Wall", "Holding Grenade" },
-	Default = { "Close To Wall" },
-})
-perspectiveMain:AddSlider({ Name = "Distance", Min = 30, Max = 200, Default = 70 })
-perspective:AddGroup():AddDropdown({
-	Name = "Disable Overhead",
-	Multi = true,
-	Options = { "Self", "Teammates", "Enemies" },
-})
+	local RENDER_NAME = "NocturneView_" .. tostring(math.random(1, 1e6))
+	RunService:BindToRenderStep(RENDER_NAME, Enum.RenderPriority.Camera.Value + 1, function()
+		local cam = camera()
+		if not cam then
+			return
+		end
+		if view.fov then
+			cam.FieldOfView = view.fovValue
+		end
+		-- «растянутый экран»: сжимаем картинку по вертикали
+		if view.stretch then
+			local s = view.stretchScale
+			cam.CFrame = cam.CFrame * CFrame.new(0, 0, 0, 1, 0, 0, 0, s, 0, 0, 0, 1)
+		end
+	end)
 
-ViewSection:AddDropdown({
-	Name = "Unlock Spectating",
-	Multi = true,
-	Options = { "Free Camera", "Any Player", "Enemies" },
-	Width = 130,
-})
-ViewSection:AddDropdown({
-	Name = "Visual Recoil",
-	Multi = true,
-	Options = { "No Shake", "No Recoil", "No Viewmodel Recoil" },
-	Width = 130,
-})
+	local function setFov(enabled)
+		local cam = camera()
+		if enabled and not view.fov and cam then
+			view.fovSaved = cam.FieldOfView
+		elseif not enabled and view.fov and cam and view.fovSaved then
+			cam.FieldOfView = view.fovSaved
+			view.fovSaved = nil
+		end
+		view.fov = enabled
+	end
 
--------------------------------- HUD ---------------------------------
-local Hud = Misc:AddSection({ Name = "HUD", Side = "Right" })
-Hud:AddToggle({ Name = "Radar", Default = false })
-Hud:AddToggle({ Name = "Preserve Killfeed", Default = false })
-Hud:AddToggle({ Name = "Inaccuracy Overlay", Default = false }):AddColorpicker({ Default = Color3.fromRGB(120, 122, 136) })
-Hud:AddDropdown({ Name = "Scope Overlay", Options = { "Default", "Lines", "None" }, Default = "Default", Width = 130 })
+	local function applyThirdPerson()
+		if view.third then
+			if not view.thirdSaved then
+				view.thirdSaved = {
+					mode = localPlayer.CameraMode,
+					min = localPlayer.CameraMinZoomDistance,
+					max = localPlayer.CameraMaxZoomDistance,
+				}
+			end
+			localPlayer.CameraMode = Enum.CameraMode.Classic
+			-- сначала максимум, потом минимум: минимум не может быть больше максимума
+			localPlayer.CameraMaxZoomDistance = math.max(view.thirdDistance, view.thirdSaved.max)
+			localPlayer.CameraMinZoomDistance = view.thirdDistance
+		elseif view.thirdSaved then
+			localPlayer.CameraMinZoomDistance = view.thirdSaved.min
+			localPlayer.CameraMaxZoomDistance = view.thirdSaved.max
+			localPlayer.CameraMode = view.thirdSaved.mode
+			view.thirdSaved = nil
+		end
+	end
 
-local scoreboard = Hud:AddSubmenu({ Name = "Scoreboard" })
-local scoreboardMain = scoreboard:AddGroup()
-scoreboardMain:AddToggle({ Name = "Reveal Money", Default = true })
-scoreboardMain:AddDropdown({ Name = "Equipment", Options = { "Disabled", "Enemy Only", "Everyone" }, Default = "Enemy Only" })
-scoreboard:AddGroup():AddChecklist({
-	Options = { "Primary", "Secondary", "Knife", "Taser", "Grenades", "Bomb", "Defuse Kit", "Armor", "Other" },
-	Default = { "Primary", "Secondary", "Grenades", "Bomb", "Defuse Kit" },
-})
+	------------------------------ прицел ------------------------------
+	local cross = {
+		enabled = false,
+		color = Color3.fromRGB(120, 255, 140),
+		style = "Cross",
+		size = 8,
+		gap = 4,
+		thickness = 2,
+		outline = true,
+		dot = false,
+	}
+	local crossFrame = Instance.new("Frame")
+	crossFrame.Name = "NocturneCrosshair"
+	crossFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+	crossFrame.Position = UDim2.fromScale(0.5, 0.5)
+	crossFrame.Size = UDim2.fromOffset(0, 0)
+	crossFrame.BackgroundTransparency = 1
+	crossFrame.Visible = false
+	crossFrame.Parent = Window.widgetLayer
 
-local crosshairs = Hud:AddSubmenu({ Name = "Crosshairs" })
-local crosshairsGroup = crosshairs:AddGroup()
-crosshairsGroup:AddToggle({ Name = "Default", Default = true })
-crosshairsGroup:AddToggle({ Name = "While Scoped", Default = false })
-crosshairsGroup:AddToggle({ Name = "Penetration", Default = false }):AddColorpicker({ Default = Color3.fromRGB(196, 84, 168) })
+	local function crossPart(x, y, w, h, round)
+		local part = Instance.new("Frame")
+		part.AnchorPoint = Vector2.new(0.5, 0.5)
+		part.Position = UDim2.fromOffset(x, y)
+		part.Size = UDim2.fromOffset(w, h)
+		part.BackgroundColor3 = cross.color
+		part.BorderSizePixel = 0
+		if round then
+			local c = Instance.new("UICorner")
+			c.CornerRadius = UDim.new(1, 0)
+			c.Parent = part
+		end
+		if cross.outline then
+			local outline = Instance.new("UIStroke")
+			outline.Color = Color3.new(0, 0, 0)
+			outline.Thickness = 1
+			outline.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			outline.Parent = part
+		end
+		part.Parent = crossFrame
+		return part
+	end
 
------------------------------- WORLD ESP -----------------------------
-local WorldEsp = Misc:AddSection({ Name = "World ESP", Side = "Left" })
+	local function rebuildCrosshair()
+		crossFrame:ClearAllChildren()
+		crossFrame.Visible = cross.enabled
+		if not cross.enabled then
+			return
+		end
+		local size, gap, thick = cross.size, cross.gap, cross.thickness
+		local offset = gap + size / 2
+		if cross.style == "Cross" or cross.style == "T-Shape" then
+			if cross.style == "Cross" then
+				crossPart(0, -offset, thick, size)
+			end
+			crossPart(0, offset, thick, size)
+			crossPart(-offset, 0, size, thick)
+			crossPart(offset, 0, size, thick)
+		elseif cross.style == "Circle" then
+			local ring = Instance.new("Frame")
+			ring.AnchorPoint = Vector2.new(0.5, 0.5)
+			ring.Size = UDim2.fromOffset(gap * 2 + size, gap * 2 + size)
+			ring.BackgroundTransparency = 1
+			local c = Instance.new("UICorner")
+			c.CornerRadius = UDim.new(1, 0)
+			c.Parent = ring
+			local line = Instance.new("UIStroke")
+			line.Color = cross.color
+			line.Thickness = thick
+			line.Parent = ring
+			ring.Parent = crossFrame
+		end
+		if cross.dot or cross.style == "Dot" then
+			crossPart(0, 0, thick + 2, thick + 2, true)
+		end
+	end
 
-local bomb = WorldEsp:AddSubmenu({ Name = "Bomb" })
-local bombEffects = bomb:AddGroup()
-bombEffects:AddToggle({ Name = "Colorize Effects", Default = true }):AddColorpicker({ Default = Color3.fromRGB(198, 83, 161) })
-bombEffects:AddToggle({ Name = "Bomb Indicator", Default = true }):AddColorpicker({ Default = Color3.fromRGB(223, 99, 139) })
-bombEffects:AddToggle({ Name = "Defuse Indicator", Default = true }):AddColorpicker({ Default = Color3.fromRGB(214, 82, 108) })
-bombEffects:AddToggle({ Name = "Defuser", Default = true }):AddColorpicker({ Default = Color3.fromRGB(222, 119, 154) })
-local bombEsp = bomb:AddGroup()
-bombEsp:AddToggle({ Name = "Enabled", Default = true }):AddColorpicker({ Default = Color3.fromRGB(158, 229, 161) })
-bombEsp:AddLabel("Bomb Defused"):AddColorpicker({ Default = Color3.fromRGB(217, 231, 250) })
-bombEsp:AddChips({
-	Options = { "Icon", "Text", "Progress Bar", "Time Remaining", "Damage", "Distance", "Glow" },
-	Default = { "Icon", "Progress Bar", "Time Remaining" },
-})
+	--------------------------- интерфейс Roblox ---------------------------
+	local CORE_GUI = {
+		Chat = Enum.CoreGuiType.Chat,
+		["Player List"] = Enum.CoreGuiType.PlayerList,
+		Backpack = Enum.CoreGuiType.Backpack,
+		Health = Enum.CoreGuiType.Health,
+		Emotes = Enum.CoreGuiType.EmotesMenu,
+	}
+	local coreOriginal = {}
+	for name, kind in pairs(CORE_GUI) do
+		local ok, enabled = pcall(function()
+			return StarterGui:GetCoreGuiEnabled(kind)
+		end)
+		coreOriginal[name] = not ok or enabled
+	end
+	local hiddenCore = {}
+	local function applyCoreGui()
+		for name, kind in pairs(CORE_GUI) do
+			pcall(function()
+				StarterGui:SetCoreGuiEnabled(kind, coreOriginal[name] and not hiddenCore[name])
+			end)
+		end
+	end
 
-local weapons = WorldEsp:AddSubmenu({ Name = "Weapons" })
-local weaponsGroup = weapons:AddGroup()
-weaponsGroup:AddToggle({ Name = "Colorize Effects", Default = true }):AddColorpicker({ Default = Color3.fromRGB(200, 88, 173) })
-weaponsGroup:AddToggle({ Name = "Enabled", Default = true }):AddColorpicker({ Default = WHITE })
-weapons:AddGroup():AddChips({ Options = { "Icon", "Text", "Ammo", "Distance", "Glow" }, Default = { "Icon", "Ammo" } })
+	------------------------------ атмосфера ------------------------------
+	local amb = {
+		time = false,
+		timeValue = 14,
+		bright = false,
+		brightValue = 2,
+		ambient = false,
+		ambientColor = Color3.fromRGB(140, 140, 160),
+		fog = false,
+		fogColor = Color3.fromRGB(150, 160, 190),
+		fogDistance = 500,
+	}
+	local savedAtmosphere = nil -- { object, density, color }
 
-local hostages = WorldEsp:AddSubmenu({ Name = "Hostages" })
-hostages:AddGroup():AddToggle({ Name = "Rescue Indicator", Default = true }):AddColorpicker({ Default = Color3.fromRGB(190, 215, 243) })
-local hostagesEsp = hostages:AddGroup()
-hostagesEsp:AddToggle({ Name = "Enabled", Default = true }):AddColorpicker({ Default = Color3.fromRGB(241, 108, 157) })
-hostagesEsp:AddChips({ Options = { "Bounding Box", "Progress Bar", "Text", "Distance", "Glow" }, Default = { "Text" } })
+	local function applyAmbience()
+		if amb.time then
+			setLighting("ClockTime", amb.timeValue)
+		else
+			restoreLighting("ClockTime")
+		end
+		if amb.bright then
+			setLighting("Brightness", amb.brightValue)
+		else
+			restoreLighting("Brightness")
+		end
+		if amb.ambient then
+			setLighting("Ambient", amb.ambientColor)
+			setLighting("OutdoorAmbient", amb.ambientColor)
+		else
+			restoreLighting("Ambient")
+			restoreLighting("OutdoorAmbient")
+		end
+		local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
+		if amb.fog then
+			setLighting("FogColor", amb.fogColor)
+			setLighting("FogStart", 0)
+			setLighting("FogEnd", amb.fogDistance)
+			-- если в игре есть Atmosphere, обычный туман не работает — настраиваем её
+			if atmosphere then
+				if not savedAtmosphere or savedAtmosphere.object ~= atmosphere then
+					savedAtmosphere = { object = atmosphere, density = atmosphere.Density, color = atmosphere.Color }
+				end
+				atmosphere.Color = amb.fogColor
+				atmosphere.Density = math.clamp(150 / amb.fogDistance, 0, 1)
+			end
+		else
+			restoreLighting("FogColor")
+			restoreLighting("FogStart")
+			restoreLighting("FogEnd")
+			if savedAtmosphere then
+				if savedAtmosphere.object.Parent then
+					savedAtmosphere.object.Density = savedAtmosphere.density
+					savedAtmosphere.object.Color = savedAtmosphere.color
+				end
+				savedAtmosphere = nil
+			end
+		end
+	end
 
-local grenades = WorldEsp:AddSubmenu({ Name = "Grenades" })
-local grenadesFx = grenades:AddGroup()
-grenadesFx:AddToggle({ Name = "Smoke Radius", Default = true }):AddColorpicker({ Default = Color3.fromRGB(91, 149, 237) })
-grenadesFx:AddToggle({ Name = "Molotov Radius", Default = true }):AddColorpicker({ Default = Color3.fromRGB(203, 170, 107) })
-grenadesFx:AddToggle({ Name = "Colorize Smoke", Default = false }):AddColorpicker({ Default = Color3.fromRGB(167, 170, 121) })
-grenadesFx:AddToggle({ Name = "Colorize Molotov", Default = false }):AddColorpicker({ Default = Color3.fromRGB(228, 168, 52) })
-grenadesFx:AddToggle({ Name = "Colorize Explosion", Default = false }):AddColorpicker({ Default = Color3.fromRGB(108, 152, 237) })
-local grenadesEsp = grenades:AddGroup()
-grenadesEsp:AddToggle({ Name = "Enabled", Default = true }):AddColorpicker({ Default = WHITE })
-grenadesEsp:AddChips({
-	Options = { "Icon", "Text", "Progress Bar", "Time Remaining", "Distance", "Glow", "Trajectory" },
-	Default = { "Icon", "Time Remaining" },
-})
+	------------------------------ удаления ------------------------------
+	local removals = { ["Post Processing"] = false, Shadows = false, ["Decals & Textures"] = false }
+	local disabledEffects = setmetatable({}, { __mode = "k" }) -- эффект -> было включено
+	local hiddenDecals = setmetatable({}, { __mode = "k" }) -- декаль -> исходная прозрачность
+	local decalConnection = nil
 
-local trajectory = WorldEsp:AddToggle({ Name = "Grenade Trajectory", Default = false })
-local trajectoryGroup = trajectory:AddSettings("Grenade Trajectory"):AddGroup()
-trajectoryGroup:AddLabel("Color"):AddColorpicker({ Default = Color3.fromRGB(239, 70, 123) })
-trajectoryGroup:AddSlider({ Name = "Exponent", Min = 0, Max = 100, Default = 45 })
-trajectoryGroup:AddToggle({ Name = "Thrown Grenades", Default = true })
-trajectoryGroup:AddToggle({ Name = "Pin Pulled Only", Default = true })
-WorldEsp:AddToggle({ Name = "Grenade Proximity Warnings", Default = false })
+	local function isCharacterPart(item)
+		local model = item:FindFirstAncestorWhichIsA("Model")
+		return model ~= nil and model:FindFirstChildOfClass("Humanoid") ~= nil
+	end
+
+	local function hideDecal(item)
+		if (item:IsA("Decal") or item:IsA("Texture")) and hiddenDecals[item] == nil and not isCharacterPart(item) then
+			hiddenDecals[item] = item.Transparency
+			item.Transparency = 1
+		end
+	end
+
+	local function applyRemovals()
+		-- постобработка: Bloom, Blur, ColorCorrection, SunRays, DepthOfField
+		if removals["Post Processing"] then
+			for _, parent in ipairs({ Lighting, camera() }) do
+				if parent then
+					for _, effect in ipairs(parent:GetChildren()) do
+						if effect:IsA("PostEffect") and effect.Enabled then
+							disabledEffects[effect] = true
+							effect.Enabled = false
+						end
+					end
+				end
+			end
+		else
+			for effect in pairs(disabledEffects) do
+				if effect.Parent then
+					effect.Enabled = true
+				end
+				disabledEffects[effect] = nil
+			end
+		end
+
+		if removals.Shadows then
+			setLighting("GlobalShadows", false)
+		else
+			restoreLighting("GlobalShadows")
+		end
+
+		if removals["Decals & Textures"] then
+			if not decalConnection then
+				for _, item in ipairs(workspace:GetDescendants()) do
+					hideDecal(item)
+				end
+				decalConnection = workspace.DescendantAdded:Connect(hideDecal)
+			end
+		elseif decalConnection then
+			decalConnection:Disconnect()
+			decalConnection = nil
+			for item, transparency in pairs(hiddenDecals) do
+				if item.Parent then
+					item.Transparency = transparency
+				end
+				hiddenDecals[item] = nil
+			end
+		end
+	end
+
+	-- Игры часто сами переставляют свет и камеру, поэтому регулярно применяем настройки заново.
+	task.spawn(function()
+		while Window.gui.Parent do
+			pcall(applyAmbience)
+			pcall(applyRemovals)
+			if view.third then
+				pcall(applyThirdPerson)
+			end
+			task.wait(0.5)
+		end
+	end)
+
+	-- При Unload всё возвращаем как было.
+	Window:_track({
+		Disconnect = function()
+			pcall(function()
+				RunService:UnbindFromRenderStep(RENDER_NAME)
+			end)
+			setFov(false)
+			view.stretch = false
+			view.third = false
+			pcall(applyThirdPerson)
+			if view.zoomSaved then
+				localPlayer.CameraMaxZoomDistance = view.zoomSaved
+				view.zoomSaved = nil
+			end
+			cross.enabled = false
+			crossFrame:Destroy()
+			hiddenCore = {}
+			applyCoreGui()
+			for key in pairs(amb) do
+				if type(amb[key]) == "boolean" then
+					amb[key] = false
+				end
+			end
+			pcall(applyAmbience)
+			for key in pairs(removals) do
+				removals[key] = false
+			end
+			pcall(applyRemovals)
+		end,
+	})
+
+	-------------------------------- VIEW --------------------------------
+	local ViewSection = Misc:AddSection({ Name = "View", Side = "Left" })
+
+	local viewOptions = ViewSection:AddSubmenu({ Name = "View Options" })
+	local viewFov = viewOptions:AddGroup()
+	viewFov:AddToggle({ Name = "Override FOV", Default = false, Callback = setFov })
+	viewFov:AddSlider({
+		Name = "Value",
+		Min = 30,
+		Max = 120,
+		Default = 90,
+		Suffix = "°",
+		Callback = function(value)
+			view.fovValue = value
+		end,
+	})
+	local viewStretch = viewOptions:AddGroup()
+	viewStretch:AddToggle({
+		Name = "Stretch Screen",
+		Default = false,
+		Callback = function(value)
+			view.stretch = value
+		end,
+	})
+	viewStretch:AddSlider({
+		Name = "Vertical Scale",
+		Min = 50,
+		Max = 100,
+		Default = 75,
+		Suffix = "%",
+		Callback = function(value)
+			view.stretchScale = value / 100
+		end,
+	})
+
+	local perspective = ViewSection:AddSubmenu({ Name = "Perspective Options" })
+	local perspectiveMain = perspective:AddGroup()
+	perspectiveMain:AddToggle({
+		Name = "Force Third Person",
+		Default = false,
+		Callback = function(value)
+			view.third = value
+			pcall(applyThirdPerson)
+		end,
+	}):AddKeybind({ Default = Enum.KeyCode.V })
+	perspectiveMain:AddSlider({
+		Name = "Distance",
+		Min = 4,
+		Max = 40,
+		Default = 12,
+		Callback = function(value)
+			view.thirdDistance = value
+			if view.third then
+				pcall(applyThirdPerson)
+			end
+		end,
+	})
+
+	ViewSection:AddToggle({
+		Name = "Unlock Zoom",
+		Icon = "scale",
+		Default = false,
+		Callback = function(value)
+			-- разрешить отдалять камеру дальше лимита игры
+			if value then
+				view.zoomSaved = view.zoomSaved or localPlayer.CameraMaxZoomDistance
+				localPlayer.CameraMaxZoomDistance = 400
+			elseif view.zoomSaved then
+				localPlayer.CameraMaxZoomDistance = view.zoomSaved
+				view.zoomSaved = nil
+			end
+		end,
+	})
+
+	-------------------------------- HUD ---------------------------------
+	local Hud = Misc:AddSection({ Name = "HUD", Side = "Right" })
+	local crosshair = Hud:AddToggle({
+		Name = "Custom Crosshair",
+		Default = false,
+		Callback = function(value)
+			cross.enabled = value
+			rebuildCrosshair()
+		end,
+	})
+	crosshair:AddColorpicker({
+		Default = cross.color,
+		Callback = function(color)
+			cross.color = color
+			rebuildCrosshair()
+		end,
+	})
+	local crossSettings = crosshair:AddSettings("Crosshair")
+	local crossShape = crossSettings:AddGroup()
+	crossShape:AddDropdown({
+		Name = "Style",
+		Options = { "Cross", "T-Shape", "Circle", "Dot" },
+		Default = "Cross",
+		Callback = function(style)
+			cross.style = style
+			rebuildCrosshair()
+		end,
+	})
+	crossShape:AddSlider({
+		Name = "Size",
+		Min = 2,
+		Max = 30,
+		Default = 8,
+		Callback = function(value)
+			cross.size = value
+			rebuildCrosshair()
+		end,
+	})
+	crossShape:AddSlider({
+		Name = "Gap",
+		Min = 0,
+		Max = 20,
+		Default = 4,
+		Callback = function(value)
+			cross.gap = value
+			rebuildCrosshair()
+		end,
+	})
+	crossShape:AddSlider({
+		Name = "Thickness",
+		Min = 1,
+		Max = 6,
+		Default = 2,
+		Callback = function(value)
+			cross.thickness = value
+			rebuildCrosshair()
+		end,
+	})
+	local crossExtra = crossSettings:AddGroup()
+	crossExtra:AddToggle({
+		Name = "Outline",
+		Default = true,
+		Callback = function(value)
+			cross.outline = value
+			rebuildCrosshair()
+		end,
+	})
+	crossExtra:AddToggle({
+		Name = "Center Dot",
+		Default = false,
+		Callback = function(value)
+			cross.dot = value
+			rebuildCrosshair()
+		end,
+	})
+
+	Hud:AddDropdown({
+		Name = "Hide Roblox UI",
+		Multi = true,
+		Options = { "Chat", "Player List", "Backpack", "Health", "Emotes" },
+		Width = 130,
+		Callback = function(selected)
+			hiddenCore = {}
+			for _, name in ipairs(selected) do
+				hiddenCore[name] = true
+			end
+			applyCoreGui()
+		end,
+	})
+
+	-------------------------------- WORLD -------------------------------
+	local WorldSection = Misc:AddSection({ Name = "World", Side = "Left" })
+
+	local ambience = WorldSection:AddSubmenu({ Name = "Ambience", Icon = "palette" })
+	local ambTime = ambience:AddGroup()
+	ambTime:AddToggle({
+		Name = "Time of Day",
+		Default = false,
+		Callback = function(value)
+			amb.time = value
+			applyAmbience()
+		end,
+	})
+	ambTime:AddSlider({
+		Name = "Hour",
+		Min = 0,
+		Max = 24,
+		Default = 14,
+		Decimals = 1,
+		Callback = function(value)
+			amb.timeValue = value
+		end,
+	})
+	local ambLight = ambience:AddGroup()
+	ambLight:AddToggle({
+		Name = "Brightness",
+		Default = false,
+		Callback = function(value)
+			amb.bright = value
+			applyAmbience()
+		end,
+	})
+	ambLight:AddSlider({
+		Name = "Value",
+		Min = 0,
+		Max = 10,
+		Default = 2,
+		Decimals = 1,
+		Callback = function(value)
+			amb.brightValue = value
+		end,
+	})
+	ambLight:AddToggle({
+		Name = "Ambient Color",
+		Default = false,
+		Callback = function(value)
+			amb.ambient = value
+			applyAmbience()
+		end,
+	}):AddColorpicker({
+		Default = amb.ambientColor,
+		Callback = function(color)
+			amb.ambientColor = color
+		end,
+	})
+	local ambFog = ambience:AddGroup()
+	ambFog:AddToggle({
+		Name = "Fog",
+		Default = false,
+		Callback = function(value)
+			amb.fog = value
+			applyAmbience()
+		end,
+	}):AddColorpicker({
+		Default = amb.fogColor,
+		Callback = function(color)
+			amb.fogColor = color
+		end,
+	})
+	ambFog:AddSlider({
+		Name = "Fog Distance",
+		Min = 50,
+		Max = 2000,
+		Default = 500,
+		Callback = function(value)
+			amb.fogDistance = value
+		end,
+	})
+
+	local removalsPanel = WorldSection:AddSubmenu({ Name = "Removals", Icon = "info" })
+	removalsPanel:AddGroup():AddChecklist({
+		Options = { "Post Processing", "Shadows", "Decals & Textures" },
+		Callback = function(selected)
+			for key in pairs(removals) do
+				removals[key] = false
+			end
+			for _, name in ipairs(selected) do
+				removals[name] = true
+			end
+			applyRemovals()
+		end,
+	})
+end
 
 ---------------------------- MISCELLANEOUS ---------------------------
 local MiscSection = Misc:AddSection({ Name = "Miscellaneous", Side = "Right" })
@@ -1303,52 +1776,138 @@ SpectatorWidget:SetAccent(WIDGET_ACCENT)
 HotkeyWidget:SetDynamic(true)
 SpectatorWidget:SetDynamic(true)
 
-local removals = MiscSection:AddSubmenu({ Name = "Removals" })
-removals:AddGroup():AddChecklist({
-	Options = {
-		"Flashbang Effect",
-		"Smoke Rendering",
-		"First Person Legs",
-		"Carried Hostage",
-		"Post Processing",
-		"Team Intro",
-		"Water Effects",
-		"Blood Effects",
-		"Decals",
-	},
-	Default = { "Flashbang Effect" },
-})
-local ragdolls = removals:AddGroup()
-ragdolls:AddDropdown({ Name = "Ragdolls", Options = { "Default", "Disabled", "Frozen" }, Default = "Default" })
-ragdolls:AddSlider({ Name = "Gravity", Min = 0, Max = 100, Default = 60, Suffix = "%" })
-ragdolls:AddSlider({ Name = "Friction", Min = 0, Max = 100, Default = 60, Suffix = "%" })
+-- Производительность и сервер.
+do
+	local localPlayer = game:GetService("Players").LocalPlayer
 
-local ambience = MiscSection:AddSubmenu({ Name = "Ambience" })
-local night = ambience:AddGroup()
-night:AddToggle({ Name = "Night Mode", Default = false })
-night:AddSlider({ Name = "Brightness", Min = 0, Max = 100, Default = 40, Suffix = "%" })
-local fog = ambience:AddGroup()
-fog:AddToggle({ Name = "Fog", Default = false }):AddColorpicker({ Default = Color3.fromRGB(150, 160, 190) })
-fog:AddSlider({ Name = "Fog Distance", Min = 0, Max = 1000, Default = 400 })
-local sky = ambience:AddGroup()
-sky:AddDropdown({ Name = "Skybox", Options = { "Default", "Night", "Space", "Sunset" }, Default = "Default" })
-sky:AddLabel("Ambient Color"):AddColorpicker({ Default = Color3.fromRGB(120, 120, 140) })
+	local performance = MiscSection:AddSubmenu({ Name = "Performance", Icon = "monitor" })
+	local fpsGroup = performance:AddGroup()
+	local fpsState = { enabled = false, value = 144 }
+	-- setfpscap есть только у инжекторов
+	local function applyFpsCap()
+		if type(setfpscap) ~= "function" then
+			return false
+		end
+		pcall(setfpscap, fpsState.enabled and fpsState.value or 60)
+		return true
+	end
+	fpsGroup:AddToggle({
+		Name = "FPS Cap",
+		Default = false,
+		Callback = function(value)
+			fpsState.enabled = value
+			if not applyFpsCap() and value then
+				Window:Notify({ Title = "Performance", Text = "This executor has no setfpscap.", Duration = 3 })
+			end
+		end,
+	})
+	fpsGroup:AddSlider({
+		Name = "Max FPS",
+		Min = 30,
+		Max = 360,
+		Default = 144,
+		Callback = function(value)
+			fpsState.value = value
+			if fpsState.enabled then
+				applyFpsCap()
+			end
+		end,
+	})
 
-local hitMarker = MiscSection:AddSubmenu({ Name = "Hit Marker" })
-for _, kind in ipairs({ "2D Marker", "3D Marker", "Damage Marker" }) do
-	local group = hitMarker:AddGroup()
-	group:AddToggle({ Name = kind, Default = kind ~= "3D Marker" }):AddColorpicker({ Default = WHITE })
-	group:AddSlider({ Name = "Duration", Min = 0, Max = 5, Default = 1, Decimals = 1, Suffix = "s" })
+	-- Anti-AFK: Roblox кикает через 20 минут бездействия; при сигнале простоя «шевелим» ввод.
+	local antiAfk = false
+	Window:_track(localPlayer.Idled:Connect(function()
+		if not antiAfk then
+			return
+		end
+		pcall(function()
+			local virtualUser = game:GetService("VirtualUser")
+			virtualUser:CaptureController()
+			virtualUser:ClickButton2(Vector2.new())
+		end)
+	end))
+	performance:AddGroup():AddToggle({
+		Name = "Anti-AFK",
+		Default = false,
+		Callback = function(value)
+			antiAfk = value
+		end,
+	})
+
+	Window:_track({
+		Disconnect = function()
+			if fpsState.enabled then
+				fpsState.enabled = false
+				applyFpsCap()
+			end
+		end,
+	})
+
+	local serverPanel = MiscSection:AddSubmenu({ Name = "Server", Icon = "globe" })
+	local serverGroup = serverPanel:AddGroup()
+	serverGroup:AddButton({
+		Name = "Rejoin Server",
+		Callback = function()
+			local TeleportService = game:GetService("TeleportService")
+			Window:Notify({ Title = "Server", Text = "Rejoining...", Duration = 3 })
+			local ok = pcall(function()
+				if game.JobId ~= "" then
+					TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, localPlayer)
+				else
+					TeleportService:Teleport(game.PlaceId, localPlayer)
+				end
+			end)
+			if not ok then
+				Window:Notify({ Title = "Server", Text = "Rejoin failed.", Duration = 3 })
+			end
+		end,
+	})
+	serverGroup:AddButton({
+		Name = "Copy Server ID",
+		Callback = function()
+			if type(setclipboard) == "function" then
+				pcall(setclipboard, game.JobId)
+				Window:Notify({ Title = "Server", Text = "Server ID copied.", Duration = 3 })
+			else
+				Window:Notify({ Title = "Server", Text = "This executor has no setclipboard.", Duration = 3 })
+			end
+		end,
+	})
 end
 
-local bulletTracers = MiscSection:AddSubmenu({ Name = "Bullet Tracers" })
-for _, who in ipairs({ "Enemies", "Teammates", "Local Player" }) do
-	local group = bulletTracers:AddGroup()
-	group:AddToggle({ Name = who, Default = who ~= "Teammates" }):AddColorpicker({ Default = WHITE })
-	group:AddSlider({ Name = "Duration", Min = 0, Max = 10, Default = 3, Decimals = 1, Suffix = "s" })
+for key, value in pairs({
+	World = "Мир",
+	["Stretch Screen"] = "Растянуть экран",
+	["Vertical Scale"] = "Масштаб по вертикали",
+	["Unlock Zoom"] = "Снять лимит отдаления",
+	["Custom Crosshair"] = "Свой прицел",
+	Crosshair = "Прицел",
+	Size = "Размер",
+	Gap = "Отступ",
+	Thickness = "Толщина",
+	Outline = "Обводка",
+	["Center Dot"] = "Точка в центре",
+	["Hide Roblox UI"] = "Скрыть интерфейс Roblox",
+	["Time of Day"] = "Время суток",
+	Hour = "Час",
+	["Ambient Color"] = "Цвет окружения",
+	Shadows = "Тени",
+	["Decals & Textures"] = "Декали и текстуры",
+	Performance = "Производительность",
+	["FPS Cap"] = "Ограничение FPS",
+	["Max FPS"] = "Макс. FPS",
+	["Anti-AFK"] = "Анти-АФК",
+	Server = "Сервер",
+	["Rejoin Server"] = "Перезайти на сервер",
+	["Copy Server ID"] = "Скопировать ID сервера",
+	["Rejoining..."] = "Перезаход...",
+	["Rejoin failed."] = "Не удалось перезайти.",
+	["Server ID copied."] = "ID сервера скопирован.",
+	["This executor has no setfpscap."] = "У инжектора нет setfpscap.",
+	["This executor has no setclipboard."] = "У инжектора нет setclipboard.",
+}) do
+	RU[key] = value
 end
-
-MiscSection:AddToggle({ Name = "Bullet Impacts", Default = false }):AddColorpicker({ Default = Color3.fromRGB(196, 110, 220) })
 
 ------------------------------ Settings ------------------------------
 -- То, что раньше было в Miscellaneous: движение, меню, конфиги.
