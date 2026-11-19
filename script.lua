@@ -2406,6 +2406,840 @@ for key, value in pairs({
 	RU[key] = value
 end
 
+------------------------- MISC: дополнительные функции -------------------------
+-- Всё локальное: видите только вы. При выключении и Unload всё возвращается.
+do
+	local RunService = game:GetService("RunService")
+	local Lighting = game:GetService("Lighting")
+	local SoundService = game:GetService("SoundService")
+	local UserInputService = game:GetService("UserInputService")
+	local TeleportService = game:GetService("TeleportService")
+	local PlayersService = game:GetService("Players")
+	local localPlayer = PlayersService.LocalPlayer
+
+	local function notify(title, text)
+		Window:Notify({ Title = title, Text = text, Duration = 3 })
+	end
+
+	local function character()
+		return localPlayer.Character
+	end
+
+	local function rootPart()
+		local char = character()
+		return char and char:FindFirstChild("HumanoidRootPart")
+	end
+
+	------------------------------ персонаж ------------------------------
+	local body = {
+		showInFirstPerson = false,
+		transparency = false,
+		transparencyValue = 0.5,
+		highlight = false,
+		highlightColor = Color3.fromRGB(100, 133, 247),
+		trail = false,
+		trailColor = Color3.fromRGB(240, 100, 160),
+		bob = false,
+		bobStrength = 1,
+	}
+	local highlightObject, trailObjects = nil, nil
+	local bobTime = 0
+
+	local function isAccessoryPart(part)
+		return part:FindFirstAncestorWhichIsA("Accoutrement") ~= nil
+	end
+
+	local RENDER_NAME = "NocturneBody_" .. tostring(math.random(1, 1e6))
+	RunService:BindToRenderStep(RENDER_NAME, Enum.RenderPriority.Camera.Value + 2, function(dt)
+		local char = character()
+		local cam = workspace.CurrentCamera
+		if not (char and cam) then
+			return
+		end
+		local head = char:FindFirstChild("Head")
+		local firstPerson = head and (cam.CFrame.Position - head.Position).Magnitude < 1.5
+
+		if body.transparency or (body.showInFirstPerson and firstPerson) then
+			for _, part in ipairs(char:GetDescendants()) do
+				if part:IsA("BasePart") then
+					if body.showInFirstPerson and firstPerson then
+						-- тело видно, голова и аксессуары скрыты, чтобы не мешали обзору
+						part.LocalTransparencyModifier = (part.Name == "Head" or isAccessoryPart(part)) and 1 or 0
+					else
+						part.LocalTransparencyModifier = body.transparencyValue
+					end
+				end
+			end
+		end
+
+		-- покачивание камеры при ходьбе
+		local humanoid = char:FindFirstChildOfClass("Humanoid")
+		if body.bob and humanoid and humanoid.MoveDirection.Magnitude > 0.1 then
+			bobTime += dt * 9
+			local s = body.bobStrength
+			cam.CFrame = cam.CFrame
+				* CFrame.new(math.sin(bobTime) * 0.06 * s, math.abs(math.cos(bobTime)) * 0.09 * s, 0)
+				* CFrame.Angles(0, 0, math.sin(bobTime) * 0.006 * s)
+		end
+	end)
+
+	local function updateCharacterEffects()
+		local char = character()
+		-- подсветка своего персонажа
+		if body.highlight and char then
+			if not highlightObject or highlightObject.Parent ~= char then
+				if highlightObject then
+					highlightObject:Destroy()
+				end
+				highlightObject = Instance.new("Highlight")
+				highlightObject.Name = "NocturneHighlight"
+				highlightObject.DepthMode = Enum.HighlightDepthMode.Occluded
+				highlightObject.Parent = char
+			end
+			highlightObject.FillColor = body.highlightColor
+			highlightObject.OutlineColor = body.highlightColor
+			highlightObject.FillTransparency = 0.75
+			highlightObject.OutlineTransparency = 0
+		elseif highlightObject then
+			highlightObject:Destroy()
+			highlightObject = nil
+		end
+
+		-- след за персонажем
+		local root = rootPart()
+		if body.trail and root then
+			if not trailObjects or trailObjects.trail.Parent ~= root then
+				if trailObjects then
+					trailObjects.trail:Destroy()
+					trailObjects.a0:Destroy()
+					trailObjects.a1:Destroy()
+				end
+				local a0 = Instance.new("Attachment")
+				a0.Position = Vector3.new(0, 1, 0)
+				a0.Parent = root
+				local a1 = Instance.new("Attachment")
+				a1.Position = Vector3.new(0, -1, 0)
+				a1.Parent = root
+				local trail = Instance.new("Trail")
+				trail.Attachment0 = a0
+				trail.Attachment1 = a1
+				trail.Lifetime = 0.6
+				trail.LightEmission = 0.6
+				trail.Transparency = NumberSequence.new(0.2, 1)
+				trail.Parent = root
+				trailObjects = { trail = trail, a0 = a0, a1 = a1 }
+			end
+			trailObjects.trail.Color = ColorSequence.new(body.trailColor)
+		elseif trailObjects then
+			trailObjects.trail:Destroy()
+			trailObjects.a0:Destroy()
+			trailObjects.a1:Destroy()
+			trailObjects = nil
+		end
+	end
+
+	------------------------------ инфо-панель ------------------------------
+	local sessionStart = os.clock()
+	local lastInput = os.clock()
+	Window:_track(UserInputService.InputBegan:Connect(function()
+		lastInput = os.clock()
+	end))
+	Window:_track(UserInputService.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement then
+			lastInput = os.clock()
+		end
+	end))
+
+	local infoItems = { ["Session Time"] = true, Speed = true, Position = true, ["AFK Timer"] = false }
+	local infoWidget = Window:_listWidget("Info", "Info", UDim2.fromOffset(16, 120), "info")
+	infoWidget.Visible = false
+
+	local function clock(seconds)
+		seconds = math.max(0, math.floor(seconds))
+		local hours = math.floor(seconds / 3600)
+		local minutes = math.floor(seconds % 3600 / 60)
+		local secs = seconds % 60
+		if hours > 0 then
+			return string.format("%d:%02d:%02d", hours, minutes, secs)
+		end
+		return string.format("%02d:%02d", minutes, secs)
+	end
+
+	function infoWidget:_update(state)
+		local entries = {}
+		local translate = function(key)
+			return Library:Translate(key)
+		end
+		if infoItems["Session Time"] then
+			table.insert(entries, { Name = translate("Session Time") .. ":  " .. clock(os.clock() - sessionStart), Icon = "none" })
+		end
+		local root = rootPart()
+		if infoItems.Speed and root then
+			local v = root.AssemblyLinearVelocity
+			table.insert(entries, {
+				Name = translate("Speed") .. ":  " .. math.floor(Vector3.new(v.X, 0, v.Z).Magnitude + 0.5),
+				Icon = "none",
+			})
+		end
+		if infoItems.Position and root then
+			local p = root.Position
+			table.insert(entries, {
+				Name = string.format("XYZ:  %d, %d, %d", math.floor(p.X), math.floor(p.Y), math.floor(p.Z)),
+				Icon = "none",
+			})
+		end
+		if infoItems["AFK Timer"] then
+			-- Roblox кикает после 20 минут без действий
+			table.insert(entries, { Name = translate("AFK Kick In") .. ":  " .. clock(1200 - (os.clock() - lastInput)), Icon = "none" })
+		end
+		self:SetEntries(entries, state)
+	end
+
+	-- уведомление, когда на сервер заходит друг
+	local friendAlerts = false
+	Window:_track(PlayersService.PlayerAdded:Connect(function(player)
+		if not friendAlerts then
+			return
+		end
+		local ok, isFriend = pcall(function()
+			return localPlayer:IsFriendsWith(player.UserId)
+		end)
+		if ok and isFriend then
+			notify("Friends", player.DisplayName .. " " .. Library:Translate("joined the server"))
+		end
+	end))
+
+	------------------------------ атмосфера ------------------------------
+	-- Готовые пресеты неба без картинок-ассетов: время суток, атмосфера, звёзды, свет окружения.
+	local SKY_PRESETS = {
+		Sunset = {
+			time = 17.9,
+			ambient = Color3.fromRGB(150, 110, 100),
+			stars = 0,
+			atmosphere = { Color = Color3.fromRGB(255, 170, 110), Decay = Color3.fromRGB(120, 60, 90), Density = 0.32, Haze = 2.2, Glare = 1.5, Offset = 0.1 },
+		},
+		Night = {
+			time = 0,
+			ambient = Color3.fromRGB(60, 70, 110),
+			stars = 4000,
+			atmosphere = { Color = Color3.fromRGB(40, 50, 90), Decay = Color3.fromRGB(20, 20, 40), Density = 0.3, Haze = 1, Glare = 0, Offset = 0 },
+		},
+		Space = {
+			time = 0,
+			ambient = Color3.fromRGB(80, 80, 120),
+			stars = 10000,
+			atmosphere = { Color = Color3.fromRGB(10, 10, 20), Decay = Color3.fromRGB(0, 0, 0), Density = 0, Haze = 0, Glare = 0, Offset = 0 },
+		},
+		Neon = {
+			time = 0,
+			ambient = Color3.fromRGB(140, 80, 200),
+			stars = 3000,
+			atmosphere = { Color = Color3.fromRGB(200, 80, 255), Decay = Color3.fromRGB(60, 20, 120), Density = 0.35, Haze = 2.5, Glare = 2, Offset = 0.2 },
+		},
+		["Foggy Morning"] = {
+			time = 7,
+			ambient = Color3.fromRGB(160, 165, 175),
+			stars = 0,
+			atmosphere = { Color = Color3.fromRGB(200, 210, 225), Decay = Color3.fromRGB(150, 160, 180), Density = 0.45, Haze = 3, Glare = 0.3, Offset = 0 },
+		},
+		["Golden Hour"] = {
+			time = 6.4,
+			ambient = Color3.fromRGB(170, 140, 100),
+			stars = 0,
+			atmosphere = { Color = Color3.fromRGB(255, 210, 140), Decay = Color3.fromRGB(150, 110, 70), Density = 0.28, Haze = 1.8, Glare = 1, Offset = 0.15 },
+		},
+	}
+	local ATMOSPHERE_PROPS = { "Color", "Decay", "Density", "Haze", "Glare", "Offset" }
+
+	local world = {
+		sky = "Default",
+		weather = "None",
+		rainbow = false,
+		simpleWater = false,
+	}
+	local saved = {} -- исходные значения: ["Lighting.ClockTime"] = ..., ["Atmosphere.Color"] = ...
+	local createdAtmosphere, createdSky = nil, nil
+
+	local function remember(key, object, prop)
+		if saved[key] == nil then
+			saved[key] = { object = object, prop = prop, value = object[prop] }
+		end
+	end
+	local function restore(prefix)
+		for key, entry in pairs(saved) do
+			if string.sub(key, 1, #prefix) == prefix then
+				if entry.object.Parent or entry.object == Lighting or entry.object == workspace.Terrain then
+					pcall(function()
+						entry.object[entry.prop] = entry.value
+					end)
+				end
+				saved[key] = nil
+			end
+		end
+	end
+
+	local function applySky()
+		local preset = SKY_PRESETS[world.sky]
+		if not preset then
+			restore("sky.")
+			if createdAtmosphere then
+				createdAtmosphere:Destroy()
+				createdAtmosphere = nil
+			end
+			if createdSky then
+				createdSky:Destroy()
+				createdSky = nil
+			end
+			return
+		end
+		remember("sky.ClockTime", Lighting, "ClockTime")
+		Lighting.ClockTime = preset.time
+		remember("sky.Ambient", Lighting, "Ambient")
+		remember("sky.OutdoorAmbient", Lighting, "OutdoorAmbient")
+		Lighting.Ambient = preset.ambient
+		Lighting.OutdoorAmbient = preset.ambient
+
+		local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
+		if not atmosphere then
+			createdAtmosphere = Instance.new("Atmosphere")
+			createdAtmosphere.Name = "NocturneAtmosphere"
+			createdAtmosphere.Parent = Lighting
+			atmosphere = createdAtmosphere
+		end
+		for _, prop in ipairs(ATMOSPHERE_PROPS) do
+			if atmosphere ~= createdAtmosphere then
+				remember("sky.atm." .. prop, atmosphere, prop)
+			end
+			atmosphere[prop] = preset.atmosphere[prop]
+		end
+
+		local sky = Lighting:FindFirstChildOfClass("Sky")
+		if not sky then
+			createdSky = Instance.new("Sky")
+			createdSky.Name = "NocturneSky"
+			createdSky.Parent = Lighting
+			sky = createdSky
+		end
+		if sky ~= createdSky then
+			remember("sky.StarCount", sky, "StarCount")
+		end
+		sky.StarCount = preset.stars
+	end
+
+	local function applyRainbow()
+		if world.rainbow then
+			remember("rainbow.Ambient", Lighting, "Ambient")
+			remember("rainbow.OutdoorAmbient", Lighting, "OutdoorAmbient")
+			local color = Color3.fromHSV((os.clock() / 12) % 1, 0.55, 0.85)
+			Lighting.Ambient = color
+			Lighting.OutdoorAmbient = color
+		else
+			restore("rainbow.")
+		end
+	end
+
+	local function applyWater()
+		local terrain = workspace.Terrain
+		if world.simpleWater then
+			for _, prop in ipairs({ "WaterWaveSize", "WaterWaveSpeed", "WaterReflectance", "WaterTransparency" }) do
+				remember("water." .. prop, terrain, prop)
+			end
+			terrain.WaterWaveSize = 0
+			terrain.WaterWaveSpeed = 0
+			terrain.WaterReflectance = 0
+			terrain.WaterTransparency = 0.6
+		else
+			restore("water.")
+		end
+	end
+
+	-- Погода: частицы над камерой (только у вас).
+	local weatherPart, weatherEmitter = nil, nil
+	local function applyWeather()
+		if world.weather == "None" then
+			if weatherPart then
+				weatherPart:Destroy()
+				weatherPart, weatherEmitter = nil, nil
+			end
+			return
+		end
+		if not weatherPart then
+			weatherPart = Instance.new("Part")
+			weatherPart.Name = "NocturneWeather"
+			weatherPart.Anchored = true
+			weatherPart.CanCollide = false
+			weatherPart.CanQuery = false
+			weatherPart.CanTouch = false
+			weatherPart.Transparency = 1
+			weatherPart.Size = Vector3.new(80, 1, 80)
+			weatherPart.Parent = workspace.CurrentCamera
+			weatherEmitter = Instance.new("ParticleEmitter")
+			weatherEmitter.EmissionDirection = Enum.NormalId.Bottom
+			weatherEmitter.Parent = weatherPart
+		end
+		if world.weather == "Snow" then
+			weatherEmitter.Rate = 250
+			weatherEmitter.Lifetime = NumberRange.new(6, 9)
+			weatherEmitter.Speed = NumberRange.new(5, 9)
+			weatherEmitter.Size = NumberSequence.new(0.25)
+			weatherEmitter.SpreadAngle = Vector2.new(25, 25)
+			weatherEmitter.Acceleration = Vector3.new(0, -1, 0)
+			weatherEmitter.Color = ColorSequence.new(Color3.new(1, 1, 1))
+			weatherEmitter.LightEmission = 0.4
+			pcall(function()
+				weatherEmitter.Squash = NumberSequence.new(0)
+				weatherEmitter.Orientation = Enum.ParticleOrientation.FacingCamera
+			end)
+		else -- Rain
+			weatherEmitter.Rate = 700
+			weatherEmitter.Lifetime = NumberRange.new(0.8, 1.1)
+			weatherEmitter.Speed = NumberRange.new(70, 90)
+			weatherEmitter.Size = NumberSequence.new(0.07)
+			weatherEmitter.SpreadAngle = Vector2.new(3, 3)
+			weatherEmitter.Acceleration = Vector3.new(0, 0, 0)
+			weatherEmitter.Color = ColorSequence.new(Color3.fromRGB(170, 190, 220))
+			weatherEmitter.LightEmission = 0.2
+			pcall(function()
+				weatherEmitter.Squash = NumberSequence.new(-3) -- вытягиваем капли в штрихи
+				weatherEmitter.Orientation = Enum.ParticleOrientation.VelocityParallel
+			end)
+		end
+	end
+
+	Window:_track(RunService.RenderStepped:Connect(function()
+		if weatherPart and workspace.CurrentCamera then
+			weatherPart.CFrame = CFrame.new(workspace.CurrentCamera.CFrame.Position + Vector3.new(0, 30, 0))
+		end
+	end))
+
+	------------------------------ звук ------------------------------
+	local audio = { gameVolume = false, gameScale = 0.5, musicVolume = 0.5 }
+	local originalVolume = setmetatable({}, { __mode = "k" })
+	local musicSound = nil
+	local volumeConnections = {}
+
+	local function scaleSound(sound)
+		if sound:IsA("Sound") and sound ~= musicSound then
+			if originalVolume[sound] == nil then
+				originalVolume[sound] = sound.Volume
+			end
+			sound.Volume = originalVolume[sound] * audio.gameScale
+		end
+	end
+
+	local function applyGameVolume()
+		if audio.gameVolume then
+			for _, root in ipairs({ workspace, SoundService }) do
+				for _, item in ipairs(root:GetDescendants()) do
+					scaleSound(item)
+				end
+				if not volumeConnections[root] then
+					volumeConnections[root] = root.DescendantAdded:Connect(function(item)
+						if audio.gameVolume then
+							task.defer(scaleSound, item)
+						end
+					end)
+				end
+			end
+		else
+			for _, connection in pairs(volumeConnections) do
+				connection:Disconnect()
+			end
+			volumeConnections = {}
+			for sound, volume in pairs(originalVolume) do
+				if sound.Parent then
+					sound.Volume = volume
+				end
+				originalVolume[sound] = nil
+			end
+		end
+	end
+
+	local function playMusic(id)
+		id = tonumber(string.match(tostring(id or ""), "%d+"))
+		if not id then
+			notify("Music", "Enter a sound ID.")
+			return
+		end
+		if not musicSound then
+			musicSound = Instance.new("Sound")
+			musicSound.Name = "NocturneMusic"
+			musicSound.Looped = true
+			musicSound.Parent = SoundService
+		end
+		musicSound.SoundId = "rbxassetid://" .. id
+		musicSound.Volume = audio.musicVolume
+		musicSound:Play()
+	end
+
+	local function stopMusic()
+		if musicSound then
+			musicSound:Stop()
+		end
+	end
+
+	-- Сообщение в чат (обычное, его видят все — отправляется только по кнопке).
+	local function sendChat(text)
+		if text == "" then
+			return
+		end
+		local ok = pcall(function()
+			local TextChatService = game:GetService("TextChatService")
+			if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+				TextChatService.TextChannels.RBXGeneral:SendAsync(text)
+			else
+				game:GetService("ReplicatedStorage").DefaultChatSystemChatEvents.SayMessageRequest:FireServer(text, "All")
+			end
+		end)
+		if not ok then
+			notify("Chat", "Could not send the message.")
+		end
+	end
+
+	------------------------- общий цикл и Unload -------------------------
+	task.spawn(function()
+		while Window.gui.Parent do
+			pcall(updateCharacterEffects)
+			pcall(applySky)
+			pcall(applyRainbow)
+			pcall(applyWater)
+			task.wait(0.5)
+		end
+	end)
+
+	Window:_track({
+		Disconnect = function()
+			pcall(function()
+				RunService:UnbindFromRenderStep(RENDER_NAME)
+			end)
+			for key in pairs(body) do
+				if type(body[key]) == "boolean" then
+					body[key] = false
+				end
+			end
+			pcall(updateCharacterEffects)
+			local char = character()
+			if char then
+				for _, part in ipairs(char:GetDescendants()) do
+					if part:IsA("BasePart") then
+						part.LocalTransparencyModifier = 0
+					end
+				end
+			end
+			world.sky, world.weather, world.rainbow, world.simpleWater = "Default", "None", false, false
+			pcall(applySky)
+			pcall(applyRainbow)
+			pcall(applyWater)
+			pcall(applyWeather)
+			audio.gameVolume = false
+			pcall(applyGameVolume)
+			if musicSound then
+				musicSound:Destroy()
+			end
+		end,
+	})
+
+	------------------------------ интерфейс ------------------------------
+	local CharacterSection = Misc:AddSection({ Name = "Character", Side = "Left" })
+	CharacterSection:AddToggle({
+		Name = "Body in First Person",
+		Icon = "user",
+		Default = false,
+		Callback = function(value)
+			body.showInFirstPerson = value
+		end,
+	})
+	CharacterSection:AddToggle({
+		Name = "Self Transparency",
+		Default = false,
+		Callback = function(value)
+			body.transparency = value
+		end,
+	}):AddSettings("Self Transparency"):AddGroup():AddSlider({
+		Name = "Value",
+		Min = 0,
+		Max = 90,
+		Default = 50,
+		Suffix = "%",
+		Callback = function(value)
+			body.transparencyValue = value / 100
+		end,
+	})
+	CharacterSection:AddToggle({
+		Name = "Self Highlight",
+		Default = false,
+		Callback = function(value)
+			body.highlight = value
+			updateCharacterEffects()
+		end,
+	}):AddColorpicker({
+		Default = body.highlightColor,
+		Callback = function(value)
+			body.highlightColor = value
+		end,
+	})
+	CharacterSection:AddToggle({
+		Name = "Trail",
+		Default = false,
+		Callback = function(value)
+			body.trail = value
+			updateCharacterEffects()
+		end,
+	}):AddColorpicker({
+		Default = body.trailColor,
+		Callback = function(value)
+			body.trailColor = value
+		end,
+	})
+	CharacterSection:AddToggle({
+		Name = "Camera Bob",
+		Default = false,
+		Callback = function(value)
+			body.bob = value
+		end,
+	}):AddSettings("Camera Bob"):AddGroup():AddSlider({
+		Name = "Strength",
+		Min = 10,
+		Max = 300,
+		Default = 100,
+		Suffix = "%",
+		Callback = function(value)
+			body.bobStrength = value / 100
+		end,
+	})
+
+	local InfoSection = Misc:AddSection({ Name = "Info", Side = "Right" })
+	local infoToggle = InfoSection:AddToggle({
+		Name = "Info Panel",
+		Icon = "info",
+		Default = false,
+		Callback = function(value)
+			infoWidget:SetVisible(value)
+		end,
+	})
+	infoToggle:AddSettings("Info Panel"):AddGroup():AddChecklist({
+		Options = { "Session Time", "Speed", "Position", "AFK Timer" },
+		Default = { "Session Time", "Speed", "Position" },
+		Callback = function(selected)
+			for key in pairs(infoItems) do
+				infoItems[key] = false
+			end
+			for _, name in ipairs(selected) do
+				infoItems[name] = true
+			end
+		end,
+	})
+	InfoSection:AddToggle({
+		Name = "Friend Alerts",
+		Icon = "user",
+		Default = false,
+		Callback = function(value)
+			friendAlerts = value
+		end,
+	})
+
+	local AtmosphereSection = Misc:AddSection({ Name = "Atmosphere", Side = "Left" })
+	AtmosphereSection:AddDropdown({
+		Name = "Sky Preset",
+		Options = { "Default", "Sunset", "Golden Hour", "Night", "Space", "Neon", "Foggy Morning" },
+		Default = "Default",
+		Width = 130,
+		Callback = function(value)
+			world.sky = value
+			applySky()
+		end,
+	})
+	AtmosphereSection:AddDropdown({
+		Name = "Weather",
+		Options = { "None", "Snow", "Rain" },
+		Default = "None",
+		Width = 130,
+		Callback = function(value)
+			world.weather = value
+			applyWeather()
+		end,
+	})
+	AtmosphereSection:AddToggle({
+		Name = "Rainbow Ambient",
+		Default = false,
+		Callback = function(value)
+			world.rainbow = value
+			applyRainbow()
+		end,
+	})
+	AtmosphereSection:AddToggle({
+		Name = "Simple Water",
+		Default = false,
+		Callback = function(value)
+			world.simpleWater = value
+			applyWater()
+		end,
+	})
+
+	local AudioSection = Misc:AddSection({ Name = "Audio & Chat", Side = "Right" })
+	AudioSection:AddToggle({
+		Name = "Game Volume",
+		Default = false,
+		Callback = function(value)
+			audio.gameVolume = value
+			applyGameVolume()
+		end,
+	}):AddSettings("Game Volume"):AddGroup():AddSlider({
+		Name = "Volume",
+		Min = 0,
+		Max = 100,
+		Default = 50,
+		Suffix = "%",
+		Callback = function(value)
+			audio.gameScale = value / 100
+			if audio.gameVolume then
+				for sound in pairs(originalVolume) do
+					scaleSound(sound)
+				end
+			end
+		end,
+	})
+	local musicPanel = AudioSection:AddSubmenu({ Name = "Music" })
+	local musicGroup = musicPanel:AddGroup()
+	local musicBox = musicGroup:AddTextbox({ Name = "Sound ID", Placeholder = "rbxassetid", Width = 120 })
+	musicGroup:AddSlider({
+		Name = "Volume",
+		Min = 0,
+		Max = 100,
+		Default = 50,
+		Suffix = "%",
+		Callback = function(value)
+			audio.musicVolume = value / 100
+			if musicSound then
+				musicSound.Volume = audio.musicVolume
+			end
+		end,
+	})
+	local musicButtons = musicPanel:AddGroup()
+	musicButtons:AddButton({
+		Name = "Play",
+		Callback = function()
+			playMusic(musicBox:Get())
+		end,
+	})
+	musicButtons:AddButton({ Name = "Stop", Callback = stopMusic })
+
+	local chatBox = AudioSection:AddTextbox({ Name = "Message", Placeholder = "Text", Width = 150 })
+	AudioSection:AddButton({
+		Name = "Send to Chat",
+		Callback = function()
+			sendChat(chatBox:Get())
+		end,
+	})
+
+	local SocialSection = Misc:AddSection({ Name = "Social", Side = "Left" })
+	local onlineFriends = {} -- подпись -> данные друга
+	local friendDropdown = SocialSection:AddDropdown({
+		Name = "Friend",
+		Options = {},
+		AllowNone = true,
+		Width = 150,
+	})
+	local function refreshFriends()
+		task.spawn(function()
+			local ok, list = pcall(function()
+				return localPlayer:GetFriendsOnline(50)
+			end)
+			if not ok or type(list) ~= "table" then
+				notify("Friends", "Could not get online friends.")
+				return
+			end
+			onlineFriends = {}
+			local options = {}
+			for _, friend in ipairs(list) do
+				-- LocationType 4 = в игре: есть PlaceId и GameId (сервер)
+				if friend.PlaceId and friend.GameId then
+					local caption = tostring(friend.DisplayName or friend.UserName) .. " · " .. tostring(friend.LastLocation or "")
+					onlineFriends[caption] = friend
+					table.insert(options, caption)
+				end
+			end
+			friendDropdown:Refresh(options)
+			notify("Friends", #options .. " " .. Library:Translate("friends in game"))
+		end)
+	end
+	SocialSection:AddButton({ Name = "Refresh Friends", Callback = refreshFriends })
+	SocialSection:AddButton({
+		Name = "Join Friend",
+		Callback = function()
+			local friend = onlineFriends[friendDropdown:Get() or ""]
+			if not friend then
+				notify("Friends", "Pick a friend who is in a game.")
+				return
+			end
+			pcall(function()
+				TeleportService:TeleportToPlaceInstance(friend.PlaceId, friend.GameId, localPlayer)
+			end)
+		end,
+	})
+	local placeBox = SocialSection:AddTextbox({ Name = "Place ID", Placeholder = "123456", Width = 120 })
+	SocialSection:AddButton({
+		Name = "Join Place",
+		Callback = function()
+			local placeId = tonumber(string.match(placeBox:Get(), "%d+"))
+			if not placeId then
+				notify("Server", "Enter a place ID.")
+				return
+			end
+			pcall(function()
+				TeleportService:Teleport(placeId, localPlayer)
+			end)
+		end,
+	})
+
+	for key, value in pairs({
+		Character = "Персонаж",
+		["Body in First Person"] = "Тело от первого лица",
+		["Self Transparency"] = "Прозрачность себя",
+		["Self Highlight"] = "Подсветка себя",
+		Trail = "След",
+		["Camera Bob"] = "Покачивание камеры",
+		Strength = "Сила",
+		["Info Panel"] = "Инфо-панель",
+		["Session Time"] = "Время в игре",
+		Position = "Координаты",
+		["AFK Timer"] = "Таймер АФК",
+		["AFK Kick In"] = "Кик за АФК через",
+		["Friend Alerts"] = "Уведомления о друзьях",
+		Friends = "Друзья",
+		["joined the server"] = "зашёл на сервер",
+		Atmosphere = "Атмосфера",
+		["Sky Preset"] = "Небо",
+		Weather = "Погода",
+		["Rainbow Ambient"] = "Радужный свет",
+		["Simple Water"] = "Простая вода",
+		["Audio & Chat"] = "Звук и чат",
+		["Game Volume"] = "Громкость игры",
+		Volume = "Громкость",
+		Music = "Музыка",
+		["Sound ID"] = "ID звука",
+		Play = "Играть",
+		Stop = "Стоп",
+		Message = "Сообщение",
+		Text = "Текст",
+		["Send to Chat"] = "Отправить в чат",
+		Social = "Друзья и места",
+		Friend = "Друг",
+		["Refresh Friends"] = "Обновить друзей",
+		["Join Friend"] = "Зайти к другу",
+		["Place ID"] = "ID места",
+		["Join Place"] = "Зайти в место",
+		["Enter a sound ID."] = "Введите ID звука.",
+		["Could not send the message."] = "Не удалось отправить сообщение.",
+		["Could not get online friends."] = "Не удалось получить друзей онлайн.",
+		["friends in game"] = "друзей в игре",
+		["Pick a friend who is in a game."] = "Выберите друга, который сейчас в игре.",
+		["Enter a place ID."] = "Введите ID места.",
+	}) do
+		RU[key] = value
+	end
+end
+
 ------------------------------ Settings ------------------------------
 -- То, что раньше было в Miscellaneous: движение, меню, конфиги.
 local SettingsTab = Window:AddTab({ Name = "Settings", Icon = "sliders" })
@@ -2493,6 +3327,48 @@ Config:AddButton({
 		Window:Notify({ Title = "Config", Text = "All settings reset to defaults.", Duration = 3 })
 	end,
 })
+
+-- Экспорт/импорт настроек строкой — чтобы поделиться с другом.
+do
+	local HttpService = game:GetService("HttpService")
+	Config:AddButton({
+		Name = "Copy Config",
+		Callback = function()
+			if type(setclipboard) ~= "function" then
+				Window:Notify({ Title = "Config", Text = "This executor has no setclipboard.", Duration = 3 })
+				return
+			end
+			pcall(setclipboard, HttpService:JSONEncode(Library:GetConfig()))
+			Window:Notify({ Title = "Config", Text = "Config copied to clipboard.", Duration = 3 })
+		end,
+	})
+	local importBox = Config:AddTextbox({ Name = "Import", Placeholder = "Paste config", Width = 150 })
+	Config:AddButton({
+		Name = "Apply Imported",
+		Callback = function()
+			local ok, data = pcall(function()
+				return HttpService:JSONDecode(importBox:Get())
+			end)
+			if ok and type(data) == "table" then
+				Library:ApplyConfig(data)
+				Window:Notify({ Title = "Config", Text = "Config imported.", Duration = 3 })
+			else
+				Window:Notify({ Title = "Config", Text = "This is not a valid config.", Duration = 3 })
+			end
+		end,
+	})
+	for key, value in pairs({
+		["Copy Config"] = "Скопировать конфиг",
+		Import = "Импорт",
+		["Paste config"] = "Вставьте конфиг",
+		["Apply Imported"] = "Применить импорт",
+		["Config copied to clipboard."] = "Конфиг скопирован.",
+		["Config imported."] = "Конфиг импортирован.",
+		["This is not a valid config."] = "Это не конфиг.",
+	}) do
+		RU[key] = value
+	end
+end
 
 -- Переводы для новых подписей.
 for key, value in pairs({
