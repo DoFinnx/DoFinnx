@@ -420,7 +420,139 @@ Trigger:AddToggle({ Name = "Burst Fire", Default = false })
 ----------------------------------------------------------------------
 
 ------------------------------ Visuals -------------------------------
--- Вкладка Visuals собирается ближе к концу файла (блок VISUALS): ей нужны Util и связь с сервером игры.
+-- Раскладка по референсу: слева настройки для выбранной цели (Enemies / Teammates),
+-- справа превью вашего персонажа и кнопка панели ESP Items. Только интерфейс.
+local Visuals = Tabs["Visuals"]
+
+do
+	local MODEL_STYLES = { "Disabled", "Flat", "Textured", "Glow", "Metallic", "Wireframe" }
+
+	-- Набор секций для одной цели. Возвращает секции, чтобы показывать/прятать их.
+	local function buildTarget(label, colors)
+		local main = Visuals:AddSection({ Name = label, Side = "Left" })
+		main:AddToggle({ Name = "Enabled", Default = false })
+		main:AddToggle({ Name = "Offscreen Arrow", Default = false }):AddColorpicker({ Default = colors.arrow })
+		main:AddToggle({ Name = "Sounds", Default = false }):AddColorpicker({ Default = colors.sounds })
+
+		local model = Visuals:AddSection({ Name = label .. " Model", Side = "Left" })
+		for _, row in ipairs({
+			{ "Player", colors.player },
+			{ "Behind Walls", colors.walls },
+			{ "On Shot", colors.shot },
+			{ "History", colors.history },
+			{ "Ragdolls", colors.ragdolls },
+		}) do
+			model:AddDropdown({ Name = row[1], Options = MODEL_STYLES, Default = "Disabled", Width = 130 })
+				:AddColorpicker({ Default = row[2] })
+		end
+		model:AddToggle({ Name = "Soul Particles", Default = false }):AddColorpicker({ Default = colors.soul })
+		model:AddToggle({ Name = "Glow", Default = false }):AddColorpicker({ Default = colors.glow })
+		return { main, model }
+	end
+
+	local targets = {
+		Enemies = buildTarget("Enemy", {
+			arrow = Color3.fromRGB(255, 255, 255),
+			sounds = Color3.fromRGB(236, 96, 140),
+			player = Color3.fromRGB(150, 160, 255),
+			walls = Color3.fromRGB(90, 230, 240),
+			shot = Color3.fromRGB(200, 225, 215),
+			history = Color3.fromRGB(170, 170, 175),
+			ragdolls = Color3.fromRGB(150, 145, 175),
+			soul = Color3.fromRGB(100, 110, 255),
+			glow = Color3.fromRGB(200, 190, 245),
+		}),
+		Teammates = buildTarget("Teammate", {
+			arrow = Color3.fromRGB(255, 255, 255),
+			sounds = Color3.fromRGB(96, 200, 140),
+			player = Color3.fromRGB(120, 220, 160),
+			walls = Color3.fromRGB(90, 200, 120),
+			shot = Color3.fromRGB(200, 225, 215),
+			history = Color3.fromRGB(170, 170, 175),
+			ragdolls = Color3.fromRGB(150, 175, 160),
+			soul = Color3.fromRGB(100, 220, 160),
+			glow = Color3.fromRGB(180, 240, 200),
+		}),
+	}
+
+	-- Панели ESP Items: своя у каждой цели, открываются кнопкой-списком в превью.
+	local function buildEspPanel(title)
+		local panel = Visuals:CreatePanel(title)
+		panel:AddGroup():AddChips({
+			Name = "Main",
+			Options = { "Bounding Box", "Name", "Distance", "Health Bar", "Ammo Bar", "Skeleton" },
+		})
+		panel:AddGroup():AddChips({
+			Name = "Flags",
+			Options = {
+				"Unarmored", "Defuser", "Blind", "Scoped", "Reload", "Immunity", "Slowed", "Vulnerable",
+				"Bomb", "Hostage", "Defuse", "Pin Pulled", "Money", "Order Priority", "Delay",
+			},
+		})
+		panel:AddGroup():AddChips({
+			Name = "Weapon",
+			Options = { "Text", "Icon", "Readiness Bar", "Bomb", "Defuser", "Taser" },
+		})
+		return panel
+	end
+	local espPanels = {
+		Enemies = buildEspPanel("ESP Items"),
+		Teammates = buildEspPanel("ESP Items "),
+	}
+
+	local currentMode = "Enemies"
+	local function showTarget(mode)
+		currentMode = mode
+		Window:_closeAll()
+		for name, sections in pairs(targets) do
+			for _, section in ipairs(sections) do
+				section.frame.Visible = name == mode
+			end
+		end
+	end
+
+	Visuals:AddPreview({
+		Side = "Right",
+		Height = 470,
+		Modes = {
+			{ Name = "Enemies", Icon = "user" },
+			{ Name = "Teammates", Icon = "userMinus" },
+		},
+		Default = "Enemies",
+		Callback = showTarget,
+		Buttons = {
+			{
+				Icon = "list",
+				Callback = function(button)
+					Window:TogglePanel(espPanels[currentMode], button)
+				end,
+			},
+		},
+	})
+	showTarget("Enemies")
+
+	for key, value in pairs({
+		Enemy = "Враг",
+		["Enemy Model"] = "Модель врага",
+		Teammate = "Союзник",
+		["Teammate Model"] = "Модель союзника",
+		["Offscreen Arrow"] = "Стрелка за экраном",
+		Sounds = "Звуки",
+		["Behind Walls"] = "За стенами",
+		["On Shot"] = "При выстреле",
+		["Soul Particles"] = "Частицы души",
+		Enemies = "Враги",
+		Teammates = "Союзники",
+		["ESP Items "] = "Элементы ESP",
+		Hostage = "Заложник",
+		Defuse = "Разминирование",
+		["Pin Pulled"] = "Чека выдернута",
+		["Order Priority"] = "Приоритет",
+		Taser = "Тейзер",
+	}) do
+		RU[key] = value
+	end
+end
 
 ----------------------------- Inventory ------------------------------
 -- Своя модель персонажа: внешний вид другого игрока Roblox ставится на персонажа ЛОКАЛЬНО.
@@ -6835,643 +6967,6 @@ do
 		["Hide Name Tags"] = "Скрыть ники над головами",
 		["Hide Other Players"] = "Скрыть других игроков",
 		Shortcuts = "Быстрый доступ",
-	})
-end
-
-------------------- СВЯЗЬ С СЕРВЕРОМ ВАШЕЙ ИГРЫ (Auto Parry, Visuals) -------------------
--- Ваш AutoParry.server.lua создаёт ReplicatedStorage.AutoParryRemote и сам решает,
--- кому доступны Auto Parry и Visuals (по умолчанию — только админам).
--- В других играх этого Remote нет, поэтому обе функции там не работают.
-local GameLink = { state = nil }
-do
-	local ReplicatedStorage = game:GetService("ReplicatedStorage")
-	local listeners = {}
-	local remote
-
-	local function bind(found)
-		if remote or not found or not found:IsA("RemoteEvent") then
-			return
-		end
-		remote = found
-		Util.track(remote.OnClientEvent:Connect(function(state)
-			if type(state) ~= "table" then
-				return
-			end
-			GameLink.state = state
-			for _, fn in ipairs(listeners) do
-				task.spawn(pcall, fn, state)
-			end
-		end))
-		remote:FireServer({ action = "state" }) -- подтянуть настоящее состояние с сервера
-	end
-
-	function GameLink.remote()
-		bind(ReplicatedStorage:FindFirstChild("AutoParryRemote"))
-		return remote
-	end
-	-- отправить запрос серверу игры; false — в этой игре нет серверного скрипта
-	function GameLink.send(request)
-		local found = GameLink.remote()
-		if found then
-			found:FireServer(request)
-		end
-		return found ~= nil
-	end
-	function GameLink.attribute(name, default)
-		local found = GameLink.remote()
-		local value = found and found:GetAttribute(name)
-		if value == nil then
-			return default
-		end
-		return value
-	end
-	-- fn(state) вызывается на каждый ответ сервера (и сразу, если ответ уже был)
-	function GameLink.onState(fn)
-		table.insert(listeners, fn)
-		if GameLink.state then
-			task.spawn(pcall, fn, GameLink.state)
-		end
-	end
-
-	-- сервер мог ещё не создать Remote к моменту запуска меню
-	Util.track(ReplicatedStorage.ChildAdded:Connect(function(child)
-		if child.Name == "AutoParryRemote" then
-			bind(child)
-		end
-	end))
-	GameLink.remote()
-end
-
-------------------------- VISUALS (для вашего режима) -------------------------
--- Визуалы для вашей игры: мяч, его цель, игроки, зона отбивания, предупреждение.
--- Работают, только если сервер вашей игры разрешил вам Visuals (CONFIG.VISUALS_ACCESS,
--- по умолчанию только админам). Всё рисуется локально — видите только вы. Unload убирает всё.
-do
-	local Players = game:GetService("Players")
-	local SoundService = game:GetService("SoundService")
-	local localPlayer = Players.LocalPlayer
-	local VisualsTab = Tabs["Visuals"]
-	local WHITE = Color3.new(1, 1, 1)
-
-	local cfg = {
-		ballHighlight = false,
-		ballColor = Color3.fromRGB(255, 120, 60),
-		ballInfo = false,
-		directionLine = false,
-		lineColor = Color3.fromRGB(255, 220, 90),
-		targetHighlight = false,
-		targetColor = Color3.fromRGB(255, 70, 90),
-		playerHighlight = false,
-		playerColor = Color3.fromRGB(150, 160, 255),
-		playerNames = false,
-		playerDistance = true,
-		range = false,
-		rangeStyle = "Ring",
-		rangeColor = Color3.fromRGB(120, 200, 255),
-		dangerColor = Color3.fromRGB(255, 70, 90),
-		alert = false,
-		alertSound = false,
-	}
-
-	-- всё нарисованное лежит здесь
-	local folder = Instance.new("Folder")
-	folder.Name = "NocturneModeVisuals"
-	folder.Parent = Window.gui.Parent
-
-	-- надпись «мяч летит в вас» по центру сверху
-	local alertGui = Instance.new("ScreenGui")
-	alertGui.Name = "NocturneModeAlert"
-	alertGui.IgnoreGuiInset = true
-	alertGui.ResetOnSpawn = false
-	alertGui.DisplayOrder = 50
-	alertGui.Parent = Window.gui.Parent
-	local alertLabel = Instance.new("TextLabel")
-	alertLabel.AnchorPoint = Vector2.new(0.5, 0)
-	alertLabel.Position = UDim2.new(0.5, 0, 0, 90)
-	alertLabel.Size = UDim2.fromOffset(440, 36)
-	alertLabel.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
-	alertLabel.BackgroundTransparency = 0.3
-	alertLabel.Font = Enum.Font.GothamBold
-	alertLabel.TextSize = 18
-	alertLabel.Visible = false
-	alertLabel.Parent = alertGui
-	local alertCorner = Instance.new("UICorner")
-	alertCorner.CornerRadius = UDim.new(0, 8)
-	alertCorner.Parent = alertLabel
-	local alertStroke = Instance.new("UIStroke")
-	alertStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-	alertStroke.Thickness = 1.5
-	alertStroke.Parent = alertLabel
-
-	local alertSound = Instance.new("Sound")
-	alertSound.SoundId = "rbxasset://sounds/electronicpingshort.wav"
-	alertSound.Volume = 0.6
-	alertSound.Parent = SoundService
-
-	Util.onUnload(function()
-		folder:Destroy()
-		alertGui:Destroy()
-		alertSound:Destroy()
-	end)
-
-	------------------------------ доступ ------------------------------
-	local function allowed()
-		local state = GameLink.state
-		return state ~= nil and state.visuals == true
-	end
-
-	local function statusText()
-		if not GameLink.remote() then
-			return "This game has no AutoParry server script."
-		end
-		local state = GameLink.state
-		if not state then
-			return "Waiting for the game server..."
-		elseif state.visualsAccess == nil then
-			return "Update AutoParry.server.lua in your game."
-		elseif state.visuals == true then
-			return "Active: the server allowed Visuals."
-		elseif state.visualsAccess == "off" then
-			return "The server turned Visuals off."
-		end
-		return "Visuals are for admins only."
-	end
-
-	------------------------------ мячи ------------------------------
-	-- Папку и атрибут цели берём у сервера (CONFIG.BALLS_FOLDER / CONFIG.TARGET_ATTRIBUTE).
-	local function getBalls()
-		local container = workspace:FindFirstChild(tostring(GameLink.attribute("BallsFolder", "Balls")))
-		return container and container:GetChildren() or {}
-	end
-
-	local function ballTarget(ball)
-		local value = ball:GetAttribute(tostring(GameLink.attribute("TargetAttribute", "Target")))
-		if typeof(value) == "string" then
-			return Players:FindFirstChild(value)
-		elseif typeof(value) == "number" then
-			return Players:GetPlayerByUserId(value)
-		end
-		return nil
-	end
-
-	local function ballMotion(ball)
-		if ball:IsA("BasePart") then
-			return ball.Position, ball.AssemblyLinearVelocity
-		elseif ball:IsA("Model") then
-			local primary = ball.PrimaryPart
-			return ball:GetPivot().Position, primary and primary.AssemblyLinearVelocity or Vector3.zero
-		end
-		return nil, nil
-	end
-
-	local function ballPart(ball)
-		if ball:IsA("BasePart") then
-			return ball
-		end
-		return ball.PrimaryPart or ball:FindFirstChildWhichIsA("BasePart", true)
-	end
-
-	------------------------------ объекты ------------------------------
-	local function newHighlight(adornee, onTop)
-		local highlight = Instance.new("Highlight")
-		highlight.Adornee = adornee
-		highlight.FillTransparency = 0.65
-		highlight.OutlineTransparency = 0
-		highlight.DepthMode = onTop and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
-		highlight.Parent = folder
-		return highlight
-	end
-
-	local function newTag(adornee, offset, onTop)
-		local billboard = Instance.new("BillboardGui")
-		billboard.Adornee = adornee
-		billboard.Size = UDim2.fromOffset(220, 36)
-		billboard.StudsOffset = offset
-		billboard.AlwaysOnTop = onTop
-		billboard.LightInfluence = 0
-		billboard.MaxDistance = 400
-		local label = Instance.new("TextLabel")
-		label.BackgroundTransparency = 1
-		label.Size = UDim2.fromScale(1, 1)
-		label.Font = Enum.Font.GothamBold
-		label.TextSize = 13
-		label.TextColor3 = WHITE
-		label.TextStrokeTransparency = 0.35
-		label.Parent = billboard
-		billboard.Parent = folder
-		return billboard, label
-	end
-
-	-- Adornee = Terrain: CFrame адорнмента задаём прямо в мировых координатах
-	local function newAdornment(className)
-		local adornment = Instance.new(className)
-		adornment.Adornee = workspace.Terrain
-		adornment.Parent = folder
-		return adornment
-	end
-
-	local function drop(objects, key)
-		local object = objects[key]
-		if object then
-			object:Destroy()
-			objects[key] = nil
-		end
-	end
-
-	local function dropAll(objects)
-		for key in pairs(objects) do
-			drop(objects, key)
-		end
-	end
-
-	local ballObjects = {} -- [мяч] = { highlight, tag, label, line }
-	local playerObjects = {} -- [игрок] = { highlight, tag, label }
-	local rangeRing, rangeSphere, ringHollow
-	local wasThreat = false
-
-	local function clearAll()
-		for ball, objects in pairs(ballObjects) do
-			dropAll(objects)
-			ballObjects[ball] = nil
-		end
-		for player, objects in pairs(playerObjects) do
-			dropAll(objects)
-			playerObjects[player] = nil
-		end
-		if rangeRing then
-			rangeRing.Visible = false
-		end
-		if rangeSphere then
-			rangeSphere.Visible = false
-		end
-		alertLabel.Visible = false
-		wasThreat = false
-	end
-
-	------------------------------ кадр ------------------------------
-	-- Мячи: подсветка, подпись (цель, скорость, расстояние), линия направления.
-	-- Возвращает, кого мячи сейчас преследуют, и ближайший мяч, летящий в вас.
-	local function updateBalls(myPos)
-		local targeted, threat, seen = {}, nil, {}
-		for _, ball in ipairs(getBalls()) do
-			local position, velocity = ballMotion(ball)
-			if position then
-				seen[ball] = true
-				local target = ballTarget(ball)
-				if target then
-					targeted[target] = true
-				end
-				local distance = myPos and (position - myPos).Magnitude
-				if target == localPlayer and distance and (not threat or distance < threat.distance) then
-					threat = { distance = distance, speed = velocity.Magnitude }
-				end
-				local objects = ballObjects[ball]
-				if not objects then
-					objects = {}
-					ballObjects[ball] = objects
-				end
-
-				if cfg.ballHighlight then
-					objects.highlight = objects.highlight or newHighlight(ball, true)
-					objects.highlight.FillColor = cfg.ballColor
-					objects.highlight.OutlineColor = cfg.ballColor
-				else
-					drop(objects, "highlight")
-				end
-
-				local part = cfg.ballInfo and ballPart(ball)
-				if part then
-					if not objects.tag or objects.tag.Adornee ~= part then
-						drop(objects, "tag")
-						objects.tag, objects.label = newTag(part, Vector3.new(0, 3, 0), true)
-					end
-					local text = (target and target.DisplayName or Library:Translate("No target")) .. "\n"
-						.. math.floor(velocity.Magnitude + 0.5) .. " " .. Library:Translate("studs/s")
-					if distance then
-						text ..= "  ·  " .. math.floor(distance + 0.5) .. " " .. Library:Translate("studs")
-					end
-					objects.label.Text = text
-					objects.label.TextColor3 = target == localPlayer and cfg.dangerColor or WHITE
-				else
-					drop(objects, "tag")
-					objects.label = nil
-				end
-
-				if cfg.directionLine and velocity.Magnitude > 1 then
-					objects.line = objects.line or newAdornment("CylinderHandleAdornment")
-					local finish = position + velocity * 0.5 -- куда мяч долетит за полсекунды
-					objects.line.Radius = 0.12
-					objects.line.Height = (finish - position).Magnitude
-					objects.line.CFrame = CFrame.lookAt((position + finish) / 2, finish)
-					objects.line.Color3 = cfg.lineColor
-					objects.line.AlwaysOnTop = true
-					objects.line.Transparency = 0.25
-				else
-					drop(objects, "line")
-				end
-			end
-		end
-		for ball, objects in pairs(ballObjects) do
-			if not seen[ball] then
-				dropAll(objects)
-				ballObjects[ball] = nil
-			end
-		end
-		return targeted, threat
-	end
-
-	-- Игроки: подсветка цели мяча, подсветка остальных, ники с расстоянием.
-	local function updatePlayers(myPos, targeted)
-		local seen = {}
-		for _, player in ipairs(Players:GetPlayers()) do
-			local character = player.Character
-			local head = character and character:FindFirstChild("Head")
-			local isTarget = targeted[player] == true
-			local markTarget = cfg.targetHighlight and isTarget
-			local wantHighlight = character ~= nil and (markTarget or (cfg.playerHighlight and player ~= localPlayer))
-			local wantTag = head ~= nil and cfg.playerNames and player ~= localPlayer
-			if wantHighlight or wantTag then
-				seen[player] = true
-				local objects = playerObjects[player]
-				if not objects then
-					objects = {}
-					playerObjects[player] = objects
-				end
-
-				if wantHighlight then
-					if objects.highlight and objects.highlight.Adornee ~= character then
-						drop(objects, "highlight")
-					end
-					objects.highlight = objects.highlight or newHighlight(character, false)
-					local color = markTarget and cfg.targetColor or cfg.playerColor
-					objects.highlight.FillColor = color
-					objects.highlight.OutlineColor = color
-				else
-					drop(objects, "highlight")
-				end
-
-				if wantTag then
-					if not objects.tag or objects.tag.Adornee ~= head then
-						drop(objects, "tag")
-						objects.tag, objects.label = newTag(head, Vector3.new(0, 2.2, 0), false)
-					end
-					local text = Library.Settings.SafeMode and Library:Translate("Hidden") or player.DisplayName
-					if cfg.playerDistance and myPos then
-						text ..= "  [" .. math.floor((head.Position - myPos).Magnitude + 0.5) .. "]"
-					end
-					objects.label.Text = text
-					objects.label.TextColor3 = isTarget and cfg.targetColor or WHITE
-				else
-					drop(objects, "tag")
-					objects.label = nil
-				end
-			end
-		end
-		for player, objects in pairs(playerObjects) do
-			if not seen[player] then
-				dropAll(objects)
-				playerObjects[player] = nil
-			end
-		end
-	end
-
-	-- Зона отбивания вокруг вас: радиус = ваша Parry Distance с сервера.
-	-- Красная, когда мяч летит в вас.
-	local function updateRange(root, threat)
-		local show = cfg.range and root ~= nil
-		local radius = GameLink.state and tonumber(GameLink.state.distance) or 5
-		local color = threat and cfg.dangerColor or cfg.rangeColor
-
-		if show and cfg.rangeStyle == "Sphere" then
-			rangeSphere = rangeSphere or newAdornment("SphereHandleAdornment")
-			rangeSphere.Radius = radius
-			rangeSphere.CFrame = CFrame.new(root.Position)
-			rangeSphere.Color3 = color
-			rangeSphere.Transparency = 0.85
-			rangeSphere.Visible = true
-		elseif rangeSphere then
-			rangeSphere.Visible = false
-		end
-
-		if show and cfg.rangeStyle ~= "Sphere" then
-			if not rangeRing then
-				rangeRing = newAdornment("CylinderHandleAdornment")
-				rangeRing.Height = 0.15
-				-- полое кольцо, если клиент поддерживает InnerRadius; иначе полупрозрачный диск
-				ringHollow = pcall(function()
-					rangeRing.InnerRadius = 0
-				end)
-			end
-			local humanoid = Util.humanoid()
-			local legs = 3 -- R6: от центра HumanoidRootPart до земли
-			if humanoid and humanoid.RigType == Enum.HumanoidRigType.R15 then
-				legs = humanoid.HipHeight + root.Size.Y / 2
-			end
-			rangeRing.Radius = radius
-			if ringHollow then
-				rangeRing.InnerRadius = math.max(0, radius - 0.35)
-			end
-			rangeRing.Transparency = ringHollow and 0.15 or 0.75
-			rangeRing.CFrame = CFrame.new(root.Position - Vector3.new(0, legs - 0.1, 0)) * CFrame.Angles(math.rad(90), 0, 0)
-			rangeRing.Color3 = color
-			rangeRing.Visible = true
-		elseif rangeRing then
-			rangeRing.Visible = false
-		end
-	end
-
-	-- Предупреждение и звук, когда мяч выбрал вас целью.
-	local function updateAlert(threat)
-		if cfg.alert and threat then
-			alertLabel.Text = Library:Translate("Ball is coming to you") .. "  ·  "
-				.. math.floor(threat.distance + 0.5) .. " " .. Library:Translate("studs")
-			alertLabel.TextColor3 = cfg.dangerColor
-			alertStroke.Color = cfg.dangerColor
-			alertLabel.BackgroundTransparency = 0.3 + 0.15 * math.sin(os.clock() * 10)
-			alertLabel.Visible = true
-		else
-			alertLabel.Visible = false
-		end
-		if cfg.alertSound and threat and not wasThreat then
-			alertSound:Play()
-		end
-		wasThreat = threat ~= nil
-	end
-
-	local function anyEnabled()
-		return cfg.ballHighlight or cfg.ballInfo or cfg.directionLine or cfg.targetHighlight
-			or cfg.playerHighlight or cfg.playerNames or cfg.range or cfg.alert or cfg.alertSound
-	end
-
-	local cleared, reported = true, false
-	Util.render(Enum.RenderPriority.Camera.Value + 1, function()
-		if not (allowed() and anyEnabled()) then
-			if not cleared then
-				clearAll()
-				cleared = true
-			end
-			return
-		end
-		cleared = false
-		local ok, err = pcall(function()
-			local root = Util.root()
-			local myPos = root and root.Position
-			local targeted, threat = updateBalls(myPos)
-			updatePlayers(myPos, targeted)
-			updateRange(root, threat)
-			updateAlert(threat)
-		end)
-		if not ok and not reported then
-			reported = true -- одна ошибка в консоль, а не по строке на кадр
-			warn("[Nocturne] Visuals: " .. tostring(err))
-		end
-	end)
-
-	------------------------------ интерфейс ------------------------------
-	local status
-	local warned = false
-	local function refreshStatus()
-		if status then
-			status:Set(Library:Translate(statusText()))
-		end
-	end
-	local function onToggle(key)
-		return function(v)
-			cfg[key] = v
-			if v and not allowed() and not warned then
-				warned = true -- одно уведомление, а не на каждый переключатель
-				Util.notify("Visuals", statusText())
-			end
-		end
-	end
-	local function onColor(key)
-		return function(color)
-			cfg[key] = color
-		end
-	end
-
-	local BallSection = VisualsTab:AddSection({ Name = "Ball", Side = "Left" })
-	BallSection:AddToggle({ Name = "Ball Highlight", Icon = "eye", Default = false, Callback = onToggle("ballHighlight") })
-		:AddColorpicker({ Default = cfg.ballColor, Callback = onColor("ballColor") })
-	BallSection:AddToggle({ Name = "Ball Info", Icon = "list", Default = false, Callback = onToggle("ballInfo") })
-	BallSection:AddToggle({ Name = "Direction Line", Icon = "crosshair", Default = false, Callback = onToggle("directionLine") })
-		:AddColorpicker({ Default = cfg.lineColor, Callback = onColor("lineColor") })
-
-	local PlayerSection = VisualsTab:AddSection({ Name = "Players", Side = "Left" })
-	PlayerSection:AddToggle({ Name = "Ball Target", Icon = "target", Default = false, Callback = onToggle("targetHighlight") })
-		:AddColorpicker({ Default = cfg.targetColor, Callback = onColor("targetColor") })
-	PlayerSection:AddToggle({ Name = "Player Highlight", Icon = "user", Default = false, Callback = onToggle("playerHighlight") })
-		:AddColorpicker({ Default = cfg.playerColor, Callback = onColor("playerColor") })
-	PlayerSection:AddToggle({ Name = "Player Names", Icon = "user", Default = false, Callback = onToggle("playerNames") })
-	PlayerSection:AddCheckbox({ Name = "Show Distance", Default = true, Callback = function(v)
-		cfg.playerDistance = v
-	end })
-
-	local RangeSection = VisualsTab:AddSection({ Name = "Parry Range", Side = "Right" })
-	RangeSection:AddToggle({ Name = "Show Range", Icon = "crosshair", Default = false, Callback = onToggle("range") })
-		:AddColorpicker({ Default = cfg.rangeColor, Callback = onColor("rangeColor") })
-	RangeSection:AddDropdown({ Name = "Range Style", Options = { "Ring", "Sphere" }, Default = "Ring", Width = 110, Callback = function(v)
-		cfg.rangeStyle = v
-	end })
-	RangeSection:AddColorpicker({ Name = "Danger Color", Default = cfg.dangerColor, Callback = onColor("dangerColor") })
-	RangeSection:AddLabel("Radius = Parry Distance (Miscellaneous).")
-
-	local AlertSection = VisualsTab:AddSection({ Name = "Target Alert", Side = "Right" })
-	AlertSection:AddToggle({ Name = "Alert Text", Icon = "eye", Default = false, Callback = onToggle("alert") })
-	AlertSection:AddToggle({ Name = "Alert Sound", Icon = "bars", Default = false, Callback = onToggle("alertSound") })
-
-	local StatusSection = VisualsTab:AddSection({ Name = "Status", Side = "Right" })
-	status = StatusSection:AddLabel(statusText())
-	GameLink.onState(refreshStatus)
-	table.insert(Library._languageListeners, refreshStatus) -- после смены языка вернуть живой текст
-
-	Util.tr({
-		Ball = "Мяч",
-		["Ball Highlight"] = "Подсветка мяча",
-		["Ball Info"] = "Инфо о мяче",
-		["Direction Line"] = "Линия направления",
-		Players = "Игроки",
-		["Ball Target"] = "Цель мяча",
-		["Player Highlight"] = "Подсветка игроков",
-		["Player Names"] = "Ники игроков",
-		["Show Distance"] = "Показывать расстояние",
-		["Parry Range"] = "Зона отбивания",
-		["Show Range"] = "Показать зону",
-		["Range Style"] = "Вид зоны",
-		Ring = "Кольцо",
-		Sphere = "Сфера",
-		["Danger Color"] = "Цвет опасности",
-		["Radius = Parry Distance (Miscellaneous)."] = "Радиус = Дистанция отбивания (Miscellaneous).",
-		["Target Alert"] = "Предупреждение",
-		["Alert Text"] = "Надпись",
-		["Alert Sound"] = "Звук",
-		Status = "Статус",
-		["No target"] = "Без цели",
-		["studs/s"] = "ст/с",
-		studs = "ст",
-		["Ball is coming to you"] = "Мяч летит в вас",
-		["This game has no AutoParry server script."] = "В этой игре нет серверного скрипта AutoParry.",
-		["Waiting for the game server..."] = "Ждём ответа сервера игры...",
-		["Update AutoParry.server.lua in your game."] = "Обновите AutoParry.server.lua в своей игре.",
-		["Active: the server allowed Visuals."] = "Работает: сервер разрешил Visuals.",
-		["The server turned Visuals off."] = "Сервер выключил Visuals.",
-		["Visuals are for admins only."] = "Visuals только для админов.",
-	})
-end
-
-------------------------- AUTO PARRY (для вашей игры) -------------------------
--- Отбивает сервер вашей игры; меню только включает/выключает и задаёт дистанцию.
--- По умолчанию выключено. Доступ решает сервер (по умолчанию — только админы).
-do
-	local section = Tabs["Miscellaneous"]:AddSection({ Name = "Auto Parry", Side = "Left" })
-	local toggle, slider
-	local pendingDistance = 0
-
-	toggle = section:AddToggle({ Name = "Auto Parry", Icon = "crosshair", Default = false, Callback = function(v)
-		if not GameLink.send({ action = "set", value = v }) and v then
-			Util.notify("Auto Parry", "This game has no AutoParry server script.")
-			task.defer(function()
-				toggle:Set(false, true)
-			end)
-		end
-	end })
-	toggle:AddKeybind({}) -- клавиши по умолчанию нет: P уже занята кнопкой в самой игре
-
-	slider = section:AddSlider({ Name = "Parry Distance", Min = 1, Max = 20, Default = 5, Suffix = " studs", Callback = function(v)
-		-- шлём не на каждый шаг ползунка, а через 0.3 с после последнего изменения
-		pendingDistance += 1
-		local token = pendingDistance
-		task.delay(0.3, function()
-			if token == pendingDistance then
-				GameLink.send({ action = "distance", value = v })
-			end
-		end)
-	end })
-
-	section:AddLabel("Works only in a game with the AutoParry server script.")
-
-	-- сервер присылает настоящее состояние: держим меню в согласии с ним
-	GameLink.onState(function(state)
-		if state.owner == false and toggle.Value then
-			Util.notify("Auto Parry", state.access == "admins" and "Auto Parry is for admins only."
-				or "Auto Parry is not available to you in this game.")
-		end
-		local on = state.enabled == true
-		if toggle.Value ~= on then
-			toggle:Set(on, true)
-		end
-		if type(state.distance) == "number" and slider.Value ~= state.distance then
-			slider:Set(state.distance, true)
-		end
-	end)
-
-	Util.tr({
-		["Auto Parry"] = "Авто-отбивание",
-		["Parry Distance"] = "Дистанция отбивания",
-		[" studs"] = " стадов",
-		["Auto Parry is not available to you in this game."] = "Авто-отбивание недоступно вам в этой игре.",
-		["Auto Parry is for admins only."] = "Авто-отбивание только для админов.",
-		["Works only in a game with the AutoParry server script."] = "Работает только в игре с серверным скриптом AutoParry.",
 	})
 end
 
