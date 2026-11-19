@@ -18,7 +18,7 @@ local Stats = game:GetService("Stats")
 local LocalPlayer = Players.LocalPlayer
 
 local Library = {
-	Version = "1.13.0",
+	Version = "1.14.0",
 	Flags = {},
 	Windows = {},
 	Keybinds = {},
@@ -765,12 +765,18 @@ function Library:ApplyConfig(data)
 end
 
 -- Вернуть всё к значениям по умолчанию (какими элементы были при создании).
-function Library:ResetConfig()
+-- prefix (необязательно): сбросить только элементы, чей путь начинается с него (например "Rage/").
+function Library:ResetConfig(prefix)
 	for _, key in ipairs(self._elementOrder) do
-		local element = self.Elements[key]
-		applyConfigValue(element, element._default)
+		if not prefix or string.sub(key, 1, #prefix) == prefix then
+			local element = self.Elements[key]
+			applyConfigValue(element, element._default)
+		end
 	end
 end
+
+-- Подсказки при наведении: Library.Tooltips["Имя элемента"] = "текст".
+Library.Tooltips = {}
 
 local function configFile(name)
 	return "nocturne_" .. string.gsub(tostring(name or "default"), "[^%w_%-]", "_") .. ".json"
@@ -825,6 +831,19 @@ function Container:_row(name, height, labelOffset, iconName)
 		Parent = self.holder,
 	})
 	self:_beginItem(row)
+	-- подсказка, если для этого имени задан Library.Tooltips[name]
+	local window = self.window
+	row.MouseEnter:Connect(function()
+		local tip = Library.Tooltips[name]
+		if tip and window.ShowTooltip then
+			window:ShowTooltip(translate(tip), row)
+		end
+	end)
+	row.MouseLeave:Connect(function()
+		if window.HideTooltip then
+			window:HideTooltip()
+		end
+	end)
 	if iconName then
 		local rowIcon = drawIcon(iconName, row)
 		rowIcon.AnchorPoint = Vector2.new(0, 0.5)
@@ -2612,6 +2631,40 @@ end
 local Window = {}
 Window.__index = Window
 
+-- Подсказка под строкой меню.
+function Window:ShowTooltip(text, anchor)
+	if not self._tooltip then
+		self._tooltip = create("TextLabel", {
+			Name = "Tooltip",
+			BackgroundColor3 = Theme.Popup,
+			Font = FONT,
+			TextSize = TEXT_SM,
+			TextColor3 = Theme.TextStrong,
+			TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Size = UDim2.fromOffset(240, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			ZIndex = 50,
+			Visible = false,
+			Parent = self.popupLayer,
+		}, { corner(6), stroke(Theme.Stroke, 0.2, 1), padding(8, 6, 8, 6) })
+	end
+	local tip = self._tooltip
+	tip.Text = text
+	local layer = self.popupLayer.AbsolutePosition
+	local position = anchor.AbsolutePosition - layer
+	tip.Position = UDim2.fromOffset(position.X + anchor.AbsoluteSize.X - 240, position.Y + anchor.AbsoluteSize.Y + 4)
+	tip.Parent = nil
+	tip.Parent = self.popupLayer -- поверх остальных окон
+	tip.Visible = true
+end
+
+function Window:HideTooltip()
+	if self._tooltip then
+		self._tooltip.Visible = false
+	end
+end
+
 -- Открыть/закрыть панель (созданную Tab:CreatePanel) под кнопкой.
 function Window:TogglePanel(panel, anchor)
 	if self:_isOpen(panel.frame) then
@@ -4396,7 +4449,53 @@ end
 Library.SyncModels = {} -- [UserId] = { userId = чей аватар, parts = { ... } } — модели других пользователей
 Library.SyncModel = nil -- своя кастомная модель, которую видят другие пользователи скрипта
 
-function Library:_setSyncUsers(list, rawModels)
+Library.SyncColors = {} -- [UserId] = Color3 — цвет темы других пользователей
+Library.SyncInfo = {} -- общие данные с сервера: online, ranking, invites
+Library._syncDataListeners = {}
+Library._syncEventListeners = {}
+Library._outbox = {}
+Library._eventSeq = -1 -- -1: при первом контакте старые события не нужны
+Library._sessionStart = os.clock()
+
+-- fn(data) — весь ответ сервера после каждой отметки (online, ranking, invites…).
+function Library:OnSyncData(callback)
+	table.insert(self._syncDataListeners, callback)
+end
+
+-- fn(event) — событие от другого пользователя скрипта на этом сервере: { from, type, data }.
+function Library:OnSyncEvent(callback)
+	table.insert(self._syncEventListeners, callback)
+end
+
+-- Отправить событие другим пользователям скрипта на сервере (чат, метка, таймер…).
+function Library:SendSyncEvent(kind, data)
+	if not self.Settings.Sync then
+		return false
+	end
+	table.insert(self._outbox, { type = kind, data = data })
+	task.spawn(function()
+		self:_heartbeat()
+	end)
+	return true
+end
+
+-- Запрос к серверу синхронизации (для обмена конфигами, приглашений и т.п.).
+function Library:SyncRequest(path, body)
+	return syncPost(path, body)
+end
+
+function Library:_setSyncUsers(list, rawModels, rawColors)
+	if type(rawColors) == "table" then
+		local colors = {}
+		for key, value in pairs(rawColors) do
+			local id = tonumber(key)
+			local ok, color = pcall(Color3.fromHex, tostring(value))
+			if id and ok then
+				colors[id] = color
+			end
+		end
+		self.SyncColors = colors
+	end
 	local users, joined = {}, {}
 	for _, raw in ipairs(list or {}) do
 		local id = tonumber(raw)
@@ -4434,15 +4533,45 @@ end
 
 -- Одна отметка на сервере: отправляем себя (и свою модель), получаем остальных.
 function Library:_heartbeat()
+	local outbox = self._outbox
+	self._outbox = {}
 	local data, err = syncPost("/presence", {
 		userId = LocalPlayer.UserId,
 		jobId = currentJobId(),
 		placeId = game.PlaceId,
 		model = self.SyncModel,
+		color = Theme.Accent:ToHex(),
+		playSeconds = math.floor(os.clock() - self._sessionStart),
+		since = self._eventSeq,
+		events = #outbox > 0 and outbox or nil,
 	})
 	if data and type(data.users) == "table" then
-		self:_setSyncUsers(data.users, data.models)
+		self:_setSyncUsers(data.users, data.models, data.colors)
+		if type(data.seq) == "number" and self._eventSeq < 0 then
+			self._eventSeq = data.seq
+		end
+		if type(data.events) == "table" then
+			for _, event in ipairs(data.events) do
+				local seq = tonumber(event.seq)
+				if seq and seq > self._eventSeq then
+					self._eventSeq = seq
+				end
+				if tonumber(event.from) ~= LocalPlayer.UserId then
+					for _, listener in ipairs(self._syncEventListeners) do
+						pcall(listener, event)
+					end
+				end
+			end
+		end
+		self.SyncInfo = data
+		for _, listener in ipairs(self._syncDataListeners) do
+			pcall(listener, data)
+		end
 		return true
+	end
+	-- не дошло — отправим события со следующей отметкой
+	for _, event in ipairs(outbox) do
+		table.insert(self._outbox, event)
 	end
 	return false, err
 end
@@ -4522,7 +4651,7 @@ function Window:_initSyncTags()
 			padding(9, 0, 9, 0),
 			listLayout(6, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center),
 		})
-		label({
+		local logoLabel = label({
 			Text = window._logo or "NC",
 			Font = FONT_BOLD,
 			TextSize = TEXT_SM - 1,
@@ -4543,7 +4672,7 @@ function Window:_initSyncTags()
 			LayoutOrder = 2,
 			Parent = pill,
 		})
-		return { gui = billboard, name = nameLabel }
+		return { gui = billboard, name = nameLabel, logo = logoLabel, stroke = pill:FindFirstChildOfClass("UIStroke") }
 	end
 
 	local function refresh()
@@ -4565,6 +4694,12 @@ function Window:_initSyncTags()
 				tag.gui.Adornee = head -- после респавна голова новая
 				tag.gui.Enabled = Library.SyncTagsVisible
 				tag.name.Text = Library.Settings.SafeMode and translate("Hidden") or player.DisplayName
+				-- цвет значка = цвет темы этого пользователя
+				local userColor = Library.SyncColors[id] or Theme.Accent
+				tag.logo.TextColor3 = userColor
+				if tag.stroke then
+					tag.stroke.Color = userColor
+				end
 			end
 		end
 	end
