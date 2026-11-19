@@ -1402,7 +1402,8 @@ do
 			for _, parent in ipairs({ Lighting, camera() }) do
 				if parent then
 					for _, effect in ipairs(parent:GetChildren()) do
-						if effect:IsA("PostEffect") and effect.Enabled and effect.Name ~= "NocturneColor" then
+						-- свои эффекты меню (имена «Nocturne…») не трогаем
+						if effect:IsA("PostEffect") and effect.Enabled and string.sub(effect.Name, 1, 8) ~= "Nocturne" then
 							disabledEffects[effect] = true
 							effect.Enabled = false
 						end
@@ -3235,6 +3236,601 @@ do
 		["friends in game"] = "друзей в игре",
 		["Pick a friend who is in a game."] = "Выберите друга, который сейчас в игре.",
 		["Enter a place ID."] = "Введите ID места.",
+	}) do
+		RU[key] = value
+	end
+end
+
+------------------------- MISC: эффекты, оверлеи, видимость -------------------------
+-- Всё локальное: видите только вы. При выключении и Unload всё возвращается.
+do
+	local RunService = game:GetService("RunService")
+	local Lighting = game:GetService("Lighting")
+	local UserInputService = game:GetService("UserInputService")
+	local PlayersService = game:GetService("Players")
+	local localPlayer = PlayersService.LocalPlayer
+
+	local function camera()
+		return workspace.CurrentCamera
+	end
+
+	------------------------------ эффекты ------------------------------
+	local fx = {
+		bloom = false,
+		bloomIntensity = 1,
+		sunRays = false,
+		dof = false,
+		dofFocus = 30,
+		motionBlur = false,
+		motionStrength = 1,
+		filter = "None",
+		vignette = false,
+		vignetteStrength = 0.5,
+	}
+	local effects = {} -- имя -> эффект, который создали мы
+
+	-- Создаёт (или убирает) наш эффект. Имена начинаются с «Nocturne», чтобы Removals их не трогал.
+	local function ensureEffect(name, className, parent, enabled)
+		local effect = effects[name]
+		if enabled then
+			if not effect or effect.Parent ~= parent then
+				if effect then
+					effect:Destroy()
+				end
+				effect = Instance.new(className)
+				effect.Name = name
+				effect.Parent = parent
+				effects[name] = effect
+			end
+			return effect
+		elseif effect then
+			effect:Destroy()
+			effects[name] = nil
+		end
+		return nil
+	end
+
+	local FILTERS = {
+		Warm = { tint = Color3.fromRGB(255, 225, 190), saturation = 0.1, contrast = 0.05, brightness = 0 },
+		Cold = { tint = Color3.fromRGB(195, 220, 255), saturation = -0.05, contrast = 0.08, brightness = 0 },
+		Noir = { tint = Color3.new(1, 1, 1), saturation = -1, contrast = 0.35, brightness = -0.03 },
+		Sepia = { tint = Color3.fromRGB(255, 220, 170), saturation = -0.75, contrast = 0.1, brightness = 0.02 },
+		Vivid = { tint = Color3.new(1, 1, 1), saturation = 0.5, contrast = 0.15, brightness = 0 },
+		Dreamy = { tint = Color3.fromRGB(240, 215, 255), saturation = 0.15, contrast = -0.1, brightness = 0.05 },
+	}
+
+	local function applyEffects()
+		local cam = camera()
+		local bloom = ensureEffect("NocturneBloom", "BloomEffect", Lighting, fx.bloom)
+		if bloom then
+			bloom.Intensity = fx.bloomIntensity
+			bloom.Size = 30
+			bloom.Threshold = 0.9
+		end
+		local rays = ensureEffect("NocturneSunRays", "SunRaysEffect", Lighting, fx.sunRays)
+		if rays then
+			rays.Intensity = 0.12
+			rays.Spread = 0.8
+		end
+		local dof = ensureEffect("NocturneDepthOfField", "DepthOfFieldEffect", Lighting, fx.dof)
+		if dof then
+			dof.FocusDistance = fx.dofFocus
+			dof.InFocusRadius = 20
+			dof.FarIntensity = 0.6
+			dof.NearIntensity = 0.3
+		end
+		local preset = FILTERS[fx.filter]
+		local filter = cam and ensureEffect("NocturneFilter", "ColorCorrectionEffect", cam, preset ~= nil)
+		if filter and preset then
+			filter.TintColor = preset.tint
+			filter.Saturation = preset.saturation
+			filter.Contrast = preset.contrast
+			filter.Brightness = preset.brightness
+		end
+		if cam then
+			ensureEffect("NocturneMotionBlur", "BlurEffect", cam, fx.motionBlur)
+		end
+	end
+
+	-- размытие в движении: чем быстрее поворачивается камера, тем сильнее
+	local lastLook = nil
+	Window:_track(RunService.RenderStepped:Connect(function(dt)
+		local blur = effects.NocturneMotionBlur
+		local cam = camera()
+		if not (blur and cam) then
+			lastLook = nil
+			return
+		end
+		local look = cam.CFrame.LookVector
+		if lastLook then
+			local angle = math.acos(math.clamp(look:Dot(lastLook), -1, 1))
+			local speed = angle / math.max(dt, 1 / 240)
+			local target = math.clamp(speed * 2.2 * fx.motionStrength, 0, 14)
+			blur.Size = blur.Size + (target - blur.Size) * math.clamp(dt * 12, 0, 1)
+		end
+		lastLook = look
+	end))
+
+	-- виньетка: четыре затемнённых края экрана
+	local vignetteFrame = Instance.new("Frame")
+	vignetteFrame.Name = "NocturneVignette"
+	vignetteFrame.BackgroundTransparency = 1
+	vignetteFrame.Size = UDim2.fromScale(1, 1)
+	vignetteFrame.Visible = false
+	vignetteFrame.ZIndex = 0
+	vignetteFrame.Parent = Window.widgetLayer
+	local vignetteEdges = {}
+	for _, side in ipairs({
+		{ UDim2.fromScale(0, 0), UDim2.fromScale(1, 0.35), 90 }, -- верх
+		{ UDim2.fromScale(0, 0.65), UDim2.fromScale(1, 0.35), 270 }, -- низ
+		{ UDim2.fromScale(0, 0), UDim2.fromScale(0.3, 1), 0 }, -- лево
+		{ UDim2.fromScale(0.7, 0), UDim2.fromScale(0.3, 1), 180 }, -- право
+	}) do
+		local edge = Instance.new("Frame")
+		edge.BorderSizePixel = 0
+		edge.BackgroundColor3 = Color3.new(0, 0, 0)
+		edge.Position = side[1]
+		edge.Size = side[2]
+		edge.Parent = vignetteFrame
+		local gradient = Instance.new("UIGradient")
+		gradient.Rotation = side[3]
+		gradient.Parent = edge
+		table.insert(vignetteEdges, gradient)
+	end
+	local function applyVignette()
+		vignetteFrame.Visible = fx.vignette
+		for _, gradient in ipairs(vignetteEdges) do
+			gradient.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1 - fx.vignetteStrength * 0.8),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+		end
+	end
+
+	------------------------------ оверлей клавиш ------------------------------
+	-- Показывает нажатые WASD, пробел и кнопки мыши (для записи видео), плюс клики в секунду.
+	local keystrokes = Instance.new("Frame")
+	keystrokes.Name = "NocturneKeystrokes"
+	keystrokes.BackgroundTransparency = 1
+	keystrokes.Position = UDim2.new(1, -190, 1, -260)
+	keystrokes.Size = UDim2.fromOffset(170, 180)
+	keystrokes.Visible = false
+	keystrokes.Parent = Window.widgetLayer
+	Window:_draggable(keystrokes)
+	Window:_widgetScaleTarget(keystrokes)
+
+	local keyViews = {}
+	local clicks = {}
+	local function keyBox(name, text, x, y, w, h)
+		local box = Instance.new("Frame")
+		box.Position = UDim2.fromOffset(x, y)
+		box.Size = UDim2.fromOffset(w, h)
+		box.BackgroundColor3 = Color3.fromRGB(13, 14, 19)
+		box.BackgroundTransparency = 0.35
+		box.Parent = keystrokes
+		local c = Instance.new("UICorner")
+		c.CornerRadius = UDim.new(0, 8)
+		c.Parent = box
+		local label = Instance.new("TextLabel")
+		label.BackgroundTransparency = 1
+		label.Size = UDim2.fromScale(1, 1)
+		label.Font = Enum.Font.GothamBold
+		label.TextSize = 14
+		label.TextColor3 = Color3.fromRGB(226, 227, 233)
+		label.Text = text
+		label.Parent = box
+		keyViews[name] = { box = box, label = label }
+		return label
+	end
+	keyBox("W", "W", 60, 0, 50, 50)
+	keyBox("A", "A", 5, 55, 50, 50)
+	keyBox("S", "S", 60, 55, 50, 50)
+	keyBox("D", "D", 115, 55, 50, 50)
+	keyBox("Space", "SPACE", 5, 110, 160, 30)
+	local lmbLabel = keyBox("LMB", "LMB", 5, 145, 78, 34)
+	keyBox("RMB", "RMB", 87, 145, 78, 34)
+
+	local function isDown(name)
+		if name == "LMB" then
+			return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+		elseif name == "RMB" then
+			return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+		end
+		return UserInputService:IsKeyDown(Enum.KeyCode[name])
+	end
+
+	Window:_track(UserInputService.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			table.insert(clicks, os.clock())
+		end
+	end))
+	Window:_track(RunService.RenderStepped:Connect(function()
+		if not keystrokes.Visible then
+			return
+		end
+		for name, view in pairs(keyViews) do
+			local down = isDown(name)
+			view.box.BackgroundColor3 = down and Library.Theme.Accent or Color3.fromRGB(13, 14, 19)
+			view.box.BackgroundTransparency = down and 0.1 or 0.35
+		end
+		local now = os.clock()
+		while clicks[1] and now - clicks[1] > 1 do
+			table.remove(clicks, 1)
+		end
+		lmbLabel.Text = #clicks > 0 and (#clicks .. " CPS") or "LMB"
+	end))
+
+	------------------------------ инфо о сервере ------------------------------
+	local serverWidget = Window:_listWidget("ServerInfo", "Server Info", UDim2.fromOffset(16, 300), "globe")
+	serverWidget.Visible = false
+	local placeName = nil
+	task.spawn(function()
+		local ok, info = pcall(function()
+			return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
+		end)
+		placeName = ok and info and info.Name or nil
+	end)
+
+	local function clock(seconds)
+		seconds = math.max(0, math.floor(seconds))
+		return string.format("%d:%02d:%02d", math.floor(seconds / 3600), math.floor(seconds % 3600 / 60), seconds % 60)
+	end
+
+	function serverWidget:_update(state)
+		local entries = {}
+		if placeName then
+			table.insert(entries, { Name = placeName, Icon = "none" })
+		end
+		table.insert(entries, {
+			Name = Library:Translate("Players") .. ":  " .. #PlayersService:GetPlayers() .. " / " .. PlayersService.MaxPlayers,
+			Icon = "none",
+		})
+		table.insert(entries, {
+			Name = Library:Translate("Server Uptime") .. ":  " .. clock(workspace.DistributedGameTime),
+			Icon = "none",
+		})
+		local ok, ping = pcall(function()
+			return localPlayer:GetNetworkPing()
+		end)
+		if ok and type(ping) == "number" then
+			table.insert(entries, { Name = "Ping:  " .. math.floor(ping * 1000 + 0.5) .. " ms", Icon = "none" })
+		end
+		self:SetEntries(entries, state)
+	end
+
+	------------------------------ видимость ------------------------------
+	local visibility = { hideNames = false, hideOthers = false, hideAccessories = false }
+	local savedNameDisplay = setmetatable({}, { __mode = "k" }) -- humanoid -> исходный DisplayDistanceType
+
+	local function applyVisibility()
+		for _, player in ipairs(PlayersService:GetPlayers()) do
+			local char = player.Character
+			if char and player ~= localPlayer then
+				local humanoid = char:FindFirstChildOfClass("Humanoid")
+				if humanoid then
+					if visibility.hideNames then
+						if savedNameDisplay[humanoid] == nil then
+							savedNameDisplay[humanoid] = humanoid.DisplayDistanceType
+						end
+						humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+					elseif savedNameDisplay[humanoid] ~= nil then
+						humanoid.DisplayDistanceType = savedNameDisplay[humanoid]
+						savedNameDisplay[humanoid] = nil
+					end
+				end
+				for _, part in ipairs(char:GetDescendants()) do
+					if part:IsA("BasePart") or part:IsA("Decal") then
+						part.LocalTransparencyModifier = visibility.hideOthers and 1 or 0
+					end
+				end
+			end
+		end
+	end
+
+	-- свои аксессуары скрываем каждый кадр (камера Roblox сама меняет прозрачность своего персонажа)
+	Window:_track(RunService.RenderStepped:Connect(function()
+		if not visibility.hideAccessories then
+			return
+		end
+		local char = localPlayer.Character
+		if char then
+			for _, item in ipairs(char:GetChildren()) do
+				if item:IsA("Accoutrement") then
+					local handle = item:FindFirstChild("Handle")
+					if handle then
+						handle.LocalTransparencyModifier = 1
+					end
+				end
+			end
+		end
+	end))
+
+	------------------------------ облака и время ------------------------------
+	local sky = { clouds = false, cover = 0.6, density = 0.6, cloudColor = Color3.new(1, 1, 1), timeLapse = false, timeSpeed = 10 }
+	local createdClouds, savedClouds = nil, nil
+
+	local function applyClouds()
+		local terrain = workspace.Terrain
+		local clouds = terrain:FindFirstChildOfClass("Clouds")
+		if sky.clouds then
+			if not clouds then
+				createdClouds = Instance.new("Clouds")
+				createdClouds.Name = "NocturneClouds"
+				createdClouds.Parent = terrain
+				clouds = createdClouds
+			elseif clouds ~= createdClouds and not savedClouds then
+				savedClouds = { object = clouds, Cover = clouds.Cover, Density = clouds.Density, Color = clouds.Color, Enabled = clouds.Enabled }
+			end
+			clouds.Enabled = true
+			clouds.Cover = sky.cover
+			clouds.Density = sky.density
+			clouds.Color = sky.cloudColor
+		else
+			if createdClouds then
+				createdClouds:Destroy()
+				createdClouds = nil
+			end
+			if savedClouds then
+				local object = savedClouds.object
+				if object.Parent then
+					object.Cover, object.Density, object.Color, object.Enabled =
+						savedClouds.Cover, savedClouds.Density, savedClouds.Color, savedClouds.Enabled
+				end
+				savedClouds = nil
+			end
+		end
+	end
+
+	-- ускоренная смена дня и ночи: «часов в минуту»
+	Window:_track(RunService.Heartbeat:Connect(function(dt)
+		if sky.timeLapse then
+			Lighting.ClockTime = (Lighting.ClockTime + dt * sky.timeSpeed / 60) % 24
+		end
+	end))
+
+	------------------------- общий цикл и Unload -------------------------
+	task.spawn(function()
+		while Window.gui.Parent do
+			pcall(applyEffects)
+			pcall(applyVisibility)
+			pcall(applyClouds)
+			task.wait(0.5)
+		end
+	end)
+
+	Window:_track({
+		Disconnect = function()
+			for key in pairs(fx) do
+				if type(fx[key]) == "boolean" then
+					fx[key] = false
+				end
+			end
+			fx.filter = "None"
+			pcall(applyEffects)
+			for _, effect in pairs(effects) do
+				effect:Destroy()
+			end
+			visibility.hideNames, visibility.hideOthers, visibility.hideAccessories = false, false, false
+			pcall(applyVisibility)
+			sky.clouds, sky.timeLapse = false, false
+			pcall(applyClouds)
+		end,
+	})
+
+	------------------------------ интерфейс ------------------------------
+	local EffectsSection = Misc:AddSection({ Name = "Effects", Side = "Right" })
+	local postPanel = EffectsSection:AddSubmenu({ Name = "Post Effects", Icon = "palette" })
+	local bloomGroup = postPanel:AddGroup()
+	bloomGroup:AddToggle({
+		Name = "Bloom",
+		Default = false,
+		Callback = function(value)
+			fx.bloom = value
+			applyEffects()
+		end,
+	})
+	bloomGroup:AddSlider({
+		Name = "Intensity",
+		Min = 10,
+		Max = 300,
+		Default = 100,
+		Suffix = "%",
+		Callback = function(value)
+			fx.bloomIntensity = value / 100
+			applyEffects()
+		end,
+	})
+	bloomGroup:AddToggle({
+		Name = "Sun Rays",
+		Default = false,
+		Callback = function(value)
+			fx.sunRays = value
+			applyEffects()
+		end,
+	})
+	local dofGroup = postPanel:AddGroup()
+	dofGroup:AddToggle({
+		Name = "Depth of Field",
+		Default = false,
+		Callback = function(value)
+			fx.dof = value
+			applyEffects()
+		end,
+	})
+	dofGroup:AddSlider({
+		Name = "Focus Distance",
+		Min = 5,
+		Max = 200,
+		Default = 30,
+		Callback = function(value)
+			fx.dofFocus = value
+			applyEffects()
+		end,
+	})
+	local blurGroup = postPanel:AddGroup()
+	blurGroup:AddToggle({
+		Name = "Motion Blur",
+		Default = false,
+		Callback = function(value)
+			fx.motionBlur = value
+			applyEffects()
+		end,
+	})
+	blurGroup:AddSlider({
+		Name = "Strength",
+		Min = 10,
+		Max = 300,
+		Default = 100,
+		Suffix = "%",
+		Callback = function(value)
+			fx.motionStrength = value / 100
+		end,
+	})
+
+	EffectsSection:AddDropdown({
+		Name = "Filter",
+		Options = { "None", "Warm", "Cold", "Noir", "Sepia", "Vivid", "Dreamy" },
+		Default = "None",
+		Width = 120,
+		Callback = function(value)
+			fx.filter = value
+			applyEffects()
+		end,
+	})
+	EffectsSection:AddToggle({
+		Name = "Vignette",
+		Default = false,
+		Callback = function(value)
+			fx.vignette = value
+			applyVignette()
+		end,
+	}):AddSettings("Vignette"):AddGroup():AddSlider({
+		Name = "Strength",
+		Min = 10,
+		Max = 100,
+		Default = 50,
+		Suffix = "%",
+		Callback = function(value)
+			fx.vignetteStrength = value / 100
+			applyVignette()
+		end,
+	})
+	EffectsSection:AddToggle({
+		Name = "Keystrokes",
+		Icon = "keyboard",
+		Default = false,
+		Callback = function(value)
+			keystrokes.Visible = value
+		end,
+	})
+	EffectsSection:AddToggle({
+		Name = "Server Info",
+		Icon = "globe",
+		Default = false,
+		Callback = function(value)
+			serverWidget:SetVisible(value)
+		end,
+	})
+
+	local VisibilitySection = Misc:AddSection({ Name = "Visibility", Side = "Left" })
+	VisibilitySection:AddToggle({
+		Name = "Hide Name Tags",
+		Default = false,
+		Callback = function(value)
+			visibility.hideNames = value
+			applyVisibility()
+		end,
+	})
+	VisibilitySection:AddToggle({
+		Name = "Hide Other Players",
+		Icon = "eye",
+		Default = false,
+		Callback = function(value)
+			visibility.hideOthers = value
+			applyVisibility()
+		end,
+	})
+	VisibilitySection:AddToggle({
+		Name = "Hide My Accessories",
+		Default = false,
+		Callback = function(value)
+			visibility.hideAccessories = value
+		end,
+	})
+	local cloudsToggle = VisibilitySection:AddToggle({
+		Name = "Clouds",
+		Default = false,
+		Callback = function(value)
+			sky.clouds = value
+			applyClouds()
+		end,
+	})
+	cloudsToggle:AddColorpicker({
+		Default = sky.cloudColor,
+		Callback = function(value)
+			sky.cloudColor = value
+		end,
+	})
+	local cloudsGroup = cloudsToggle:AddSettings("Clouds"):AddGroup()
+	cloudsGroup:AddSlider({
+		Name = "Cover",
+		Min = 0,
+		Max = 100,
+		Default = 60,
+		Suffix = "%",
+		Callback = function(value)
+			sky.cover = value / 100
+		end,
+	})
+	cloudsGroup:AddSlider({
+		Name = "Density",
+		Min = 0,
+		Max = 100,
+		Default = 60,
+		Suffix = "%",
+		Callback = function(value)
+			sky.density = value / 100
+		end,
+	})
+	VisibilitySection:AddToggle({
+		Name = "Time Lapse",
+		Default = false,
+		Callback = function(value)
+			sky.timeLapse = value
+		end,
+	}):AddSettings("Time Lapse"):AddGroup():AddSlider({
+		Name = "Hours per Minute",
+		Min = 1,
+		Max = 120,
+		Default = 10,
+		Callback = function(value)
+			sky.timeSpeed = value
+		end,
+	})
+
+	for key, value in pairs({
+		Effects = "Эффекты",
+		["Post Effects"] = "Постэффекты",
+		Bloom = "Свечение (Bloom)",
+		Intensity = "Интенсивность",
+		["Sun Rays"] = "Солнечные лучи",
+		["Depth of Field"] = "Глубина резкости",
+		["Focus Distance"] = "Дистанция фокуса",
+		["Motion Blur"] = "Размытие в движении",
+		Filter = "Фильтр",
+		Vignette = "Виньетка",
+		Keystrokes = "Нажатия клавиш",
+		["Server Info"] = "Инфо о сервере",
+		["Server Uptime"] = "Сервер работает",
+		Visibility = "Видимость",
+		["Hide Name Tags"] = "Скрыть ники над головами",
+		["Hide Other Players"] = "Скрыть других игроков",
+		["Hide My Accessories"] = "Скрыть свои аксессуары",
+		Clouds = "Облака",
+		Cover = "Покрытие",
+		Density = "Плотность",
+		["Time Lapse"] = "Ускоренное время",
+		["Hours per Minute"] = "Часов в минуту",
 	}) do
 		RU[key] = value
 	end
