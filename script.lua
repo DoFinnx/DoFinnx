@@ -392,46 +392,139 @@ Trigger:AddToggle({ Name = "Burst Fire", Default = false })
 Window:AddCategory("Common")
 
 ------------------------------ Visuals -------------------------------
+-- Раскладка по референсу: слева настройки для выбранной цели (Enemies / Teammates),
+-- справа превью вашего персонажа и кнопка панели ESP Items. Только интерфейс.
 local Visuals = Window:AddTab({ Name = "Visuals", Icon = "eye" })
 
-local PlayersSection = Visuals:AddSection({ Name = "Players", Side = "Left" })
-PlayersSection:AddToggle({ Name = "Enabled", Default = true }):AddColorpicker({ Default = Color3.fromRGB(241, 108, 157) })
-PlayersSection:AddDropdown({
-	Name = "Targets",
-	Multi = true,
-	Options = { "Enemies", "Teammates", "Local Player" },
-	Default = { "Enemies" },
-})
-local espItems = PlayersSection:AddSubmenu({ Name = "ESP Items" })
-espItems:AddGroup():AddChips({
-	Name = "Main",
-	Options = { "Bounding Box", "Name", "Distance", "Health Bar", "Ammo Bar", "Skeleton" },
-	Default = { "Bounding Box", "Name", "Health Bar" },
-})
-espItems:AddGroup():AddChips({
-	Name = "Flags",
-	Options = { "Unarmored", "Defuser", "Blind", "Scoped", "Reload", "Immunity", "Slowed", "Vulnerable", "Money", "Delay" },
-	Default = { "Scoped", "Reload" },
-})
-espItems:AddGroup():AddChips({ Name = "Weapon", Options = { "Text", "Icon", "Readiness Bar" }, Default = { "Icon" } })
+do
+	local MODEL_STYLES = { "Disabled", "Flat", "Textured", "Glow", "Metallic", "Wireframe" }
 
-local glow = PlayersSection:AddToggle({ Name = "Glow", Default = true })
-glow:AddColorpicker({ Default = Color3.fromRGB(100, 133, 247) })
-glow:AddSettings("Glow"):AddGroup():AddDropdown({ Name = "Style", Options = { "Default", "Pulse", "Outline" }, Default = "Default" })
-PlayersSection:AddSlider({ Name = "Max Distance", Min = 0, Max = 1000, Default = 500, Suffix = " m" })
+	-- Набор секций для одной цели. Возвращает секции, чтобы показывать/прятать их.
+	local function buildTarget(label, colors)
+		local main = Visuals:AddSection({ Name = label, Side = "Left" })
+		main:AddToggle({ Name = "Enabled", Default = false })
+		main:AddToggle({ Name = "Offscreen Arrow", Default = false }):AddColorpicker({ Default = colors.arrow })
+		main:AddToggle({ Name = "Sounds", Default = false }):AddColorpicker({ Default = colors.sounds })
 
-local Models = Visuals:AddSection({ Name = "Models", Side = "Right" })
-local enemyChams = Models:AddToggle({ Name = "Enemy Chams", Default = true })
-enemyChams:AddColorpicker({ Default = Color3.fromRGB(241, 108, 157) })
-local enemyChamsGroup = enemyChams:AddSettings("Enemy Chams"):AddGroup()
-enemyChamsGroup:AddToggle({ Name = "Visible Only", Default = false })
-enemyChamsGroup:AddLabel("Hidden Color"):AddColorpicker({ Default = Color3.fromRGB(100, 133, 247) })
-Models:AddToggle({ Name = "Team Chams", Default = false }):AddColorpicker({ Default = Color3.fromRGB(88, 196, 128) })
-Models:AddToggle({ Name = "Local Chams", Default = false }):AddColorpicker({ Default = Color3.fromRGB(245, 246, 255) })
-Models:AddToggle({ Name = "Weapon Chams", Default = false }):AddColorpicker({ Default = Color3.fromRGB(240, 150, 70) })
-Models:AddToggle({ Name = "Hand Chams", Default = false }):AddColorpicker({ Default = Color3.fromRGB(150, 110, 245) })
-Models:AddDropdown({ Name = "Material", Options = { "Flat", "Glow", "Metallic", "Glass" }, Default = "Flat", Width = 120 })
-Models:AddSlider({ Name = "Transparency", Min = 0, Max = 100, Default = 0, Suffix = "%" })
+		local model = Visuals:AddSection({ Name = label .. " Model", Side = "Left" })
+		for _, row in ipairs({
+			{ "Player", colors.player },
+			{ "Behind Walls", colors.walls },
+			{ "On Shot", colors.shot },
+			{ "History", colors.history },
+			{ "Ragdolls", colors.ragdolls },
+		}) do
+			model:AddDropdown({ Name = row[1], Options = MODEL_STYLES, Default = "Disabled", Width = 130 })
+				:AddColorpicker({ Default = row[2] })
+		end
+		model:AddToggle({ Name = "Soul Particles", Default = false }):AddColorpicker({ Default = colors.soul })
+		model:AddToggle({ Name = "Glow", Default = false }):AddColorpicker({ Default = colors.glow })
+		return { main, model }
+	end
+
+	local targets = {
+		Enemies = buildTarget("Enemy", {
+			arrow = Color3.fromRGB(255, 255, 255),
+			sounds = Color3.fromRGB(236, 96, 140),
+			player = Color3.fromRGB(150, 160, 255),
+			walls = Color3.fromRGB(90, 230, 240),
+			shot = Color3.fromRGB(200, 225, 215),
+			history = Color3.fromRGB(170, 170, 175),
+			ragdolls = Color3.fromRGB(150, 145, 175),
+			soul = Color3.fromRGB(100, 110, 255),
+			glow = Color3.fromRGB(200, 190, 245),
+		}),
+		Teammates = buildTarget("Teammate", {
+			arrow = Color3.fromRGB(255, 255, 255),
+			sounds = Color3.fromRGB(96, 200, 140),
+			player = Color3.fromRGB(120, 220, 160),
+			walls = Color3.fromRGB(90, 200, 120),
+			shot = Color3.fromRGB(200, 225, 215),
+			history = Color3.fromRGB(170, 170, 175),
+			ragdolls = Color3.fromRGB(150, 175, 160),
+			soul = Color3.fromRGB(100, 220, 160),
+			glow = Color3.fromRGB(180, 240, 200),
+		}),
+	}
+
+	-- Панели ESP Items: своя у каждой цели, открываются кнопкой-списком в превью.
+	local function buildEspPanel(title)
+		local panel = Visuals:CreatePanel(title)
+		panel:AddGroup():AddChips({
+			Name = "Main",
+			Options = { "Bounding Box", "Name", "Distance", "Health Bar", "Ammo Bar", "Skeleton" },
+		})
+		panel:AddGroup():AddChips({
+			Name = "Flags",
+			Options = {
+				"Unarmored", "Defuser", "Blind", "Scoped", "Reload", "Immunity", "Slowed", "Vulnerable",
+				"Bomb", "Hostage", "Defuse", "Pin Pulled", "Money", "Order Priority", "Delay",
+			},
+		})
+		panel:AddGroup():AddChips({
+			Name = "Weapon",
+			Options = { "Text", "Icon", "Readiness Bar", "Bomb", "Defuser", "Taser" },
+		})
+		return panel
+	end
+	local espPanels = {
+		Enemies = buildEspPanel("ESP Items"),
+		Teammates = buildEspPanel("ESP Items "),
+	}
+
+	local currentMode = "Enemies"
+	local function showTarget(mode)
+		currentMode = mode
+		Window:_closeAll()
+		for name, sections in pairs(targets) do
+			for _, section in ipairs(sections) do
+				section.frame.Visible = name == mode
+			end
+		end
+	end
+
+	Visuals:AddPreview({
+		Side = "Right",
+		Height = 470,
+		Modes = {
+			{ Name = "Enemies", Icon = "user" },
+			{ Name = "Teammates", Icon = "userMinus" },
+		},
+		Default = "Enemies",
+		Callback = showTarget,
+		Buttons = {
+			{
+				Icon = "list",
+				Callback = function(button)
+					Window:TogglePanel(espPanels[currentMode], button)
+				end,
+			},
+		},
+	})
+	showTarget("Enemies")
+
+	for key, value in pairs({
+		Enemy = "Враг",
+		["Enemy Model"] = "Модель врага",
+		Teammate = "Союзник",
+		["Teammate Model"] = "Модель союзника",
+		["Offscreen Arrow"] = "Стрелка за экраном",
+		Sounds = "Звуки",
+		["Behind Walls"] = "За стенами",
+		["On Shot"] = "При выстреле",
+		["Soul Particles"] = "Частицы души",
+		Enemies = "Враги",
+		Teammates = "Союзники",
+		["ESP Items "] = "Элементы ESP",
+		Hostage = "Заложник",
+		Defuse = "Разминирование",
+		["Pin Pulled"] = "Чека выдернута",
+		["Order Priority"] = "Приоритет",
+		Taser = "Тейзер",
+	}) do
+		RU[key] = value
+	end
+end
 
 ----------------------------- Inventory ------------------------------
 -- Своя модель персонажа: внешний вид другого игрока Roblox ставится на персонажа ЛОКАЛЬНО.
