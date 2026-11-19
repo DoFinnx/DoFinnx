@@ -6970,6 +6970,81 @@ do
 	})
 end
 
+------------------------- AUTO PARRY (для вашей игры) -------------------------
+-- Управляет серверным скриптом AutoParry.server.lua вашей игры через AutoParryRemote.
+-- Отбивает сервер; меню только включает/выключает и задаёт дистанцию.
+-- Включается только по желанию: по умолчанию выключено.
+-- В других играх этого Remote нет — переключатель сообщит об этом и выключится.
+do
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local section = Tabs["Miscellaneous"]:AddSection({ Name = "Auto Parry", Side = "Left" })
+	local remote, bound
+	local toggle, slider
+	local pendingDistance = 0
+
+	local function findRemote()
+		remote = remote or ReplicatedStorage:FindFirstChild("AutoParryRemote")
+		if remote and not bound then
+			bound = true
+			-- сервер присылает настоящее состояние: держим меню в согласии с ним
+			Util.track(remote.OnClientEvent:Connect(function(state)
+				if type(state) ~= "table" then
+					return
+				end
+				if state.owner == false and toggle.Value then
+					Util.notify("Auto Parry", "Auto Parry is not available to you in this game.")
+				end
+				local on = state.enabled == true
+				if toggle.Value ~= on then
+					toggle:Set(on, true)
+				end
+				if type(state.distance) == "number" and slider.Value ~= state.distance then
+					slider:Set(state.distance, true)
+				end
+			end))
+		end
+		return remote
+	end
+
+	toggle = section:AddToggle({ Name = "Auto Parry", Icon = "crosshair", Default = false, Callback = function(v)
+		if not findRemote() then
+			if v then
+				Util.notify("Auto Parry", "This game has no AutoParry server script.")
+				task.defer(function()
+					toggle:Set(false, true)
+				end)
+			end
+			return
+		end
+		remote:FireServer({ action = "set", value = v })
+	end })
+	toggle:AddKeybind({}) -- клавиши по умолчанию нет: P уже занята кнопкой в самой игре
+
+	slider = section:AddSlider({ Name = "Parry Distance", Min = 1, Max = 20, Default = 5, Suffix = " studs", Callback = function(v)
+		-- шлём не на каждый шаг ползунка, а через 0.3 с после последнего изменения
+		pendingDistance += 1
+		local token = pendingDistance
+		task.delay(0.3, function()
+			if token == pendingDistance and findRemote() then
+				remote:FireServer({ action = "distance", value = v })
+			end
+		end)
+	end })
+
+	section:AddLabel("Works only in a game with the AutoParry server script.")
+
+	findRemote()
+
+	Util.tr({
+		["Auto Parry"] = "Авто-отбивание",
+		["Parry Distance"] = "Дистанция отбивания",
+		[" studs"] = " стадов",
+		["This game has no AutoParry server script."] = "В этой игре нет серверного скрипта AutoParry.",
+		["Auto Parry is not available to you in this game."] = "Авто-отбивание недоступно вам в этой игре.",
+		["Works only in a game with the AutoParry server script."] = "Работает только в игре с серверным скриптом AutoParry.",
+	})
+end
+
 -- переприменить язык: подписи новых вкладок тоже переведутся
 Library:SetLanguage(Library.Settings.Language)
 
