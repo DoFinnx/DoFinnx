@@ -6592,7 +6592,7 @@ do
 			audio[band[2]] = v
 		end })
 	end
-	Mixer:AddDropdown({ Name = "Reverb", Options = { "NoReverb", "Room", "Hallway", "Cave", "Arena", "Hangar", "Underwater", "Auditorium" }, Default = "NoReverb", Width = 130, Callback = function(v)
+	Mixer:AddDropdown({ Name = "Reverb", Options = { "NoReverb", "Room", "Hallway", "Cave", "Arena", "Hangar", "UnderWater", "Auditorium" }, Default = "NoReverb", Width = 130, Callback = function(v)
 		audio.reverb = v
 		applyAllSounds()
 	end })
@@ -7324,7 +7324,7 @@ do
 	explorerStroke.Color = Color3.fromRGB(48, 48, 54)
 	explorerStroke.Parent = explorer
 	Window:_draggable(explorer)
-	local pathLabel = Util.text({ Position = UDim2.fromOffset(10, 6), Size = UDim2.new(1, -110, 0, 20), TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtStart, Parent = explorer })
+	local pathLabel = Util.text({ Position = UDim2.fromOffset(10, 6), Size = UDim2.new(1, -110, 0, 20), TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = explorer })
 	local function smallButton(text, x)
 		local button = Instance.new("TextButton")
 		button.Text = text
