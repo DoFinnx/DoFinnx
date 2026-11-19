@@ -1119,7 +1119,52 @@ do
 		third = false,
 		thirdDistance = 12,
 		thirdSaved = nil,
+		zoom = false, -- пока зажата клавиша зума
+		zoomFov = 25,
+		zoomSaved = nil,
 	}
+
+	-- Зум по удержанию клавиши (как в OptiFine).
+	local function setZoom(active)
+		local cam = camera()
+		if active and not view.zoom then
+			view.zoomSavedFov = cam and cam.FieldOfView
+		elseif not active and view.zoom and not view.fov and cam and view.zoomSavedFov then
+			cam.FieldOfView = view.zoomSavedFov
+		end
+		view.zoom = active
+	end
+
+	-- Цветокоррекция: свой ColorCorrectionEffect в камере.
+	local color = {
+		enabled = false,
+		brightness = 0,
+		contrast = 0.1,
+		saturation = 0.2,
+		tint = Color3.new(1, 1, 1),
+		effect = nil,
+	}
+	local function applyColor()
+		local cam = camera()
+		if color.enabled and cam then
+			if not color.effect or color.effect.Parent ~= cam then
+				if color.effect then
+					color.effect:Destroy()
+				end
+				color.effect = Instance.new("ColorCorrectionEffect")
+				color.effect.Name = "NocturneColor"
+				color.effect.Parent = cam
+			end
+			color.effect.Brightness = color.brightness
+			color.effect.Contrast = color.contrast
+			color.effect.Saturation = color.saturation
+			color.effect.TintColor = color.tint
+			color.effect.Enabled = true
+		elseif color.effect then
+			color.effect:Destroy()
+			color.effect = nil
+		end
+	end
 
 	local RENDER_NAME = "NocturneView_" .. tostring(math.random(1, 1e6))
 	RunService:BindToRenderStep(RENDER_NAME, Enum.RenderPriority.Camera.Value + 1, function()
@@ -1127,7 +1172,9 @@ do
 		if not cam then
 			return
 		end
-		if view.fov then
+		if view.zoom then
+			cam.FieldOfView = view.zoomFov
+		elseif view.fov then
 			cam.FieldOfView = view.fovValue
 		end
 		-- «растянутый экран»: сжимаем картинку по вертикали
@@ -1330,7 +1377,9 @@ do
 	end
 
 	------------------------------ удаления ------------------------------
-	local removals = { ["Post Processing"] = false, Shadows = false, ["Decals & Textures"] = false }
+	local removals = { ["Post Processing"] = false, Shadows = false, ["Decals & Textures"] = false, ["Simple Materials"] = false }
+	local changedMaterials = setmetatable({}, { __mode = "k" }) -- деталь -> { material, reflectance }
+	local materialConnection = nil
 	local disabledEffects = setmetatable({}, { __mode = "k" }) -- эффект -> было включено
 	local hiddenDecals = setmetatable({}, { __mode = "k" }) -- декаль -> исходная прозрачность
 	local decalConnection = nil
@@ -1353,7 +1402,7 @@ do
 			for _, parent in ipairs({ Lighting, camera() }) do
 				if parent then
 					for _, effect in ipairs(parent:GetChildren()) do
-						if effect:IsA("PostEffect") and effect.Enabled then
+						if effect:IsA("PostEffect") and effect.Enabled and effect.Name ~= "NocturneColor" then
 							disabledEffects[effect] = true
 							effect.Enabled = false
 						end
@@ -1392,6 +1441,143 @@ do
 				hiddenDecals[item] = nil
 			end
 		end
+
+		-- «картошка»: все детали мира из простого пластика без отражений (больше FPS)
+		local function simplify(item)
+			if item:IsA("BasePart") and changedMaterials[item] == nil and not isCharacterPart(item) then
+				changedMaterials[item] = { item.Material, item.Reflectance }
+				item.Material = Enum.Material.SmoothPlastic
+				item.Reflectance = 0
+			end
+		end
+		if removals["Simple Materials"] then
+			if not materialConnection then
+				for _, item in ipairs(workspace:GetDescendants()) do
+					simplify(item)
+				end
+				materialConnection = workspace.DescendantAdded:Connect(simplify)
+			end
+		elseif materialConnection then
+			materialConnection:Disconnect()
+			materialConnection = nil
+			for item, original in pairs(changedMaterials) do
+				if item.Parent then
+					item.Material = original[1]
+					item.Reflectance = original[2]
+				end
+				changedMaterials[item] = nil
+			end
+		end
+	end
+
+	--------------------------- киношный режим ---------------------------
+	-- Прячет весь интерфейс игры и Roblox (для скриншотов и видео). Меню остаётся.
+	local cinematic = { enabled = false, hidden = {} }
+	local function applyCinematic()
+		local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
+		if cinematic.enabled then
+			if playerGui then
+				for _, gui in ipairs(playerGui:GetChildren()) do
+					if gui:IsA("ScreenGui") and gui.Enabled and gui ~= Window.gui then
+						cinematic.hidden[gui] = true
+						gui.Enabled = false
+					end
+				end
+			end
+			pcall(function()
+				StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
+			end)
+		elseif next(cinematic.hidden) ~= nil or cinematic.wasOn then
+			for gui in pairs(cinematic.hidden) do
+				if gui.Parent then
+					gui.Enabled = true
+				end
+			end
+			cinematic.hidden = {}
+			cinematic.wasOn = false
+			pcall(function()
+				StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, true)
+			end)
+			applyCoreGui()
+		end
+		if cinematic.enabled then
+			cinematic.wasOn = true
+		end
+	end
+
+	------------------------------ вейпоинты ------------------------------
+	-- Метки в мире с названием и расстоянием (видны только вам). Без телепорта.
+	local waypoints = { list = {}, visible = true, color = Color3.fromRGB(100, 133, 247) }
+	local waypointFolder = Instance.new("Folder")
+	waypointFolder.Name = "NocturneWaypoints"
+	waypointFolder.Parent = Window.gui.Parent
+
+	local function rootPart()
+		local character = localPlayer.Character
+		return character and character:FindFirstChild("HumanoidRootPart")
+	end
+
+	local function addWaypoint(name)
+		local root = rootPart()
+		if not root then
+			return false
+		end
+		local attachment = Instance.new("Attachment")
+		attachment.Name = "NocturneWaypoint"
+		attachment.Position = root.Position
+		attachment.Parent = workspace.Terrain
+
+		local billboard = Instance.new("BillboardGui")
+		billboard.Size = UDim2.fromOffset(160, 40)
+		billboard.StudsOffset = Vector3.new(0, 2, 0)
+		billboard.AlwaysOnTop = true
+		billboard.LightInfluence = 0
+		billboard.Adornee = attachment
+		billboard.Enabled = waypoints.visible
+		billboard.Parent = waypointFolder
+
+		local dot = Instance.new("Frame")
+		dot.AnchorPoint = Vector2.new(0.5, 1)
+		dot.Position = UDim2.fromScale(0.5, 1)
+		dot.Size = UDim2.fromOffset(10, 10)
+		dot.BackgroundColor3 = waypoints.color
+		dot.Parent = billboard
+		local dotCorner = Instance.new("UICorner")
+		dotCorner.CornerRadius = UDim.new(1, 0)
+		dotCorner.Parent = dot
+
+		local text = Instance.new("TextLabel")
+		text.BackgroundTransparency = 1
+		text.Size = UDim2.new(1, 0, 1, -12)
+		text.Font = Enum.Font.GothamBold
+		text.TextSize = 13
+		text.TextColor3 = Color3.new(1, 1, 1)
+		text.TextStrokeTransparency = 0.5
+		text.Text = name
+		text.Parent = billboard
+
+		table.insert(waypoints.list, { name = name, attachment = attachment, billboard = billboard, text = text, dot = dot })
+		return true
+	end
+
+	local function clearWaypoints()
+		for _, waypoint in ipairs(waypoints.list) do
+			waypoint.attachment:Destroy()
+			waypoint.billboard:Destroy()
+		end
+		waypoints.list = {}
+	end
+
+	local function updateWaypoints()
+		local root = rootPart()
+		for _, waypoint in ipairs(waypoints.list) do
+			waypoint.billboard.Enabled = waypoints.visible
+			waypoint.dot.BackgroundColor3 = waypoints.color
+			if root then
+				local distance = (waypoint.attachment.WorldPosition - root.Position).Magnitude
+				waypoint.text.Text = string.format("%s  ·  %d", waypoint.name, math.floor(distance + 0.5))
+			end
+		end
 	end
 
 	-- Игры часто сами переставляют свет и камеру, поэтому регулярно применяем настройки заново.
@@ -1399,6 +1585,11 @@ do
 		while Window.gui.Parent do
 			pcall(applyAmbience)
 			pcall(applyRemovals)
+			pcall(applyColor)
+			if cinematic.enabled then
+				pcall(applyCinematic) -- новые окна игры тоже прячем
+			end
+			pcall(updateWaypoints)
 			if view.third then
 				pcall(applyThirdPerson)
 			end
@@ -1412,8 +1603,15 @@ do
 			pcall(function()
 				RunService:UnbindFromRenderStep(RENDER_NAME)
 			end)
+			setZoom(false)
 			setFov(false)
 			view.stretch = false
+			color.enabled = false
+			pcall(applyColor)
+			cinematic.enabled = false
+			pcall(applyCinematic)
+			clearWaypoints()
+			waypointFolder:Destroy()
 			view.third = false
 			pcall(applyThirdPerson)
 			if view.zoomSaved then
@@ -1494,6 +1692,60 @@ do
 			end
 		end,
 	})
+
+	-- Зум: держите клавишу (по умолчанию G) — камера приближается.
+	local zoom = ViewSection:AddToggle({
+		Name = "Zoom",
+		Icon = "crosshair",
+		Default = false,
+		Callback = setZoom,
+	})
+	zoom:AddKeybind({ Default = Enum.KeyCode.G, Mode = "Hold" })
+	zoom:AddSettings("Zoom"):AddGroup():AddSlider({
+		Name = "Zoom FOV",
+		Min = 5,
+		Max = 60,
+		Default = 25,
+		Suffix = "°",
+		Callback = function(value)
+			view.zoomFov = value
+		end,
+	})
+
+	local colorPanel = ViewSection:AddSubmenu({ Name = "Color Correction", Icon = "palette" })
+	local colorMain = colorPanel:AddGroup()
+	colorMain:AddToggle({
+		Name = "Enabled",
+		Default = false,
+		Callback = function(value)
+			color.enabled = value
+			applyColor()
+		end,
+	}):AddColorpicker({
+		Name = "Tint",
+		Default = color.tint,
+		Callback = function(value)
+			color.tint = value
+			applyColor()
+		end,
+	})
+	for _, setting in ipairs({
+		{ "Brightness", "brightness", -50, 50, 0 },
+		{ "Contrast", "contrast", -100, 100, 10 },
+		{ "Saturation", "saturation", -100, 100, 20 },
+	}) do
+		colorMain:AddSlider({
+			Name = setting[1],
+			Min = setting[3],
+			Max = setting[4],
+			Default = setting[5],
+			Suffix = "%",
+			Callback = function(value)
+				color[setting[2]] = value / 100
+				applyColor()
+			end,
+		})
+	end
 
 	ViewSection:AddToggle({
 		Name = "Unlock Zoom",
@@ -1586,6 +1838,16 @@ do
 			rebuildCrosshair()
 		end,
 	})
+
+	Hud:AddToggle({
+		Name = "Cinematic Mode",
+		Icon = "monitor",
+		Default = false,
+		Callback = function(value)
+			cinematic.enabled = value
+			applyCinematic()
+		end,
+	}):AddKeybind({ Default = Enum.KeyCode.F7 })
 
 	Hud:AddDropdown({
 		Name = "Hide Roblox UI",
@@ -1682,7 +1944,7 @@ do
 
 	local removalsPanel = WorldSection:AddSubmenu({ Name = "Removals", Icon = "info" })
 	removalsPanel:AddGroup():AddChecklist({
-		Options = { "Post Processing", "Shadows", "Decals & Textures" },
+		Options = { "Post Processing", "Shadows", "Decals & Textures", "Simple Materials" },
 		Callback = function(selected)
 			for key in pairs(removals) do
 				removals[key] = false
@@ -1693,6 +1955,36 @@ do
 			applyRemovals()
 		end,
 	})
+
+	local waypointPanel = WorldSection:AddSubmenu({ Name = "Waypoints", Icon = "crosshair" })
+	local waypointMain = waypointPanel:AddGroup()
+	waypointMain:AddToggle({
+		Name = "Show Waypoints",
+		Default = true,
+		Callback = function(value)
+			waypoints.visible = value
+		end,
+	}):AddColorpicker({
+		Default = waypoints.color,
+		Callback = function(value)
+			waypoints.color = value
+		end,
+	})
+	local waypointName = waypointMain:AddTextbox({ Name = "Name", Placeholder = "Waypoint", Width = 120 })
+	local waypointActions = waypointPanel:AddGroup()
+	waypointActions:AddButton({
+		Name = "Add Here",
+		Callback = function()
+			local name = waypointName:Get()
+			if name == "" then
+				name = "Waypoint " .. (#waypoints.list + 1)
+			end
+			if addWaypoint(name) then
+				Window:Notify({ Title = "Waypoints", Text = "Waypoint added: " .. name, Duration = 3 })
+			end
+		end,
+	})
+	waypointActions:AddButton({ Name = "Clear All", Danger = true, Callback = clearWaypoints })
 end
 
 ---------------------------- MISCELLANEOUS ---------------------------
@@ -1955,6 +2247,98 @@ do
 			end
 		end,
 	})
+	-- Список публичных серверов этой игры (API Roblox).
+	local function fetchServers()
+		local ok, body = pcall(function()
+			return game:HttpGet(
+				"https://games.roblox.com/v1/games/" .. tostring(game.PlaceId) .. "/servers/Public?sortOrder=Asc&limit=100"
+			)
+		end)
+		if not ok then
+			return nil
+		end
+		local decodeOk, data = pcall(function()
+			return game:GetService("HttpService"):JSONDecode(body)
+		end)
+		return decodeOk and type(data) == "table" and data.data or nil
+	end
+
+	local function hop(smallest)
+		Window:Notify({ Title = "Server", Text = "Searching for a server...", Duration = 3 })
+		task.spawn(function()
+			local servers = fetchServers()
+			if not servers then
+				Window:Notify({ Title = "Server", Text = "Could not get the server list.", Duration = 3 })
+				return
+			end
+			local candidates = {}
+			for _, server in ipairs(servers) do
+				local playing, maxPlayers = tonumber(server.playing), tonumber(server.maxPlayers)
+				if server.id ~= game.JobId and playing and maxPlayers and playing < maxPlayers then
+					table.insert(candidates, server)
+				end
+			end
+			if #candidates == 0 then
+				Window:Notify({ Title = "Server", Text = "No other servers found.", Duration = 3 })
+				return
+			end
+			local pick
+			if smallest then
+				table.sort(candidates, function(a, b)
+					return a.playing < b.playing
+				end)
+				pick = candidates[1]
+			else
+				pick = candidates[math.random(1, #candidates)]
+			end
+			pcall(function()
+				game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, pick.id, localPlayer)
+			end)
+		end)
+	end
+
+	serverGroup:AddButton({
+		Name = "Server Hop",
+		Callback = function()
+			hop(false)
+		end,
+	})
+	serverGroup:AddButton({
+		Name = "Join Smallest Server",
+		Callback = function()
+			hop(true)
+		end,
+	})
+
+	-- Автоперезаход: если игра выкинула (кик, потеря связи), заходим снова.
+	local autoRejoin = false
+	Window:_track(game:GetService("GuiService").ErrorMessageChanged:Connect(function(message)
+		if autoRejoin and message ~= "" then
+			task.wait(2)
+			pcall(function()
+				game:GetService("TeleportService"):Teleport(game.PlaceId, localPlayer)
+			end)
+		end
+	end))
+	serverPanel:AddGroup():AddToggle({
+		Name = "Auto Rejoin",
+		Default = false,
+		Callback = function(value)
+			autoRejoin = value
+		end,
+	})
+
+	serverGroup:AddButton({
+		Name = "Copy Game Link",
+		Callback = function()
+			if type(setclipboard) == "function" then
+				pcall(setclipboard, "https://www.roblox.com/games/" .. tostring(game.PlaceId))
+				Window:Notify({ Title = "Server", Text = "Game link copied.", Duration = 3 })
+			else
+				Window:Notify({ Title = "Server", Text = "This executor has no setclipboard.", Duration = 3 })
+			end
+		end,
+	})
 	serverGroup:AddButton({
 		Name = "Copy Server ID",
 		Callback = function()
@@ -1998,6 +2382,26 @@ for key, value in pairs({
 	["Server ID copied."] = "ID сервера скопирован.",
 	["This executor has no setfpscap."] = "У инжектора нет setfpscap.",
 	["This executor has no setclipboard."] = "У инжектора нет setclipboard.",
+	Zoom = "Зум",
+	["Zoom FOV"] = "FOV зума",
+	["Color Correction"] = "Цветокоррекция",
+	Contrast = "Контраст",
+	Saturation = "Насыщенность",
+	["Cinematic Mode"] = "Киношный режим",
+	["Simple Materials"] = "Простые материалы",
+	Waypoints = "Метки",
+	["Show Waypoints"] = "Показывать метки",
+	["Add Here"] = "Поставить здесь",
+	["Clear All"] = "Удалить все",
+	Waypoint = "Метка",
+	["Server Hop"] = "Другой сервер",
+	["Join Smallest Server"] = "Самый пустой сервер",
+	["Auto Rejoin"] = "Автоперезаход",
+	["Copy Game Link"] = "Скопировать ссылку на игру",
+	["Searching for a server..."] = "Ищу сервер...",
+	["Could not get the server list."] = "Не удалось получить список серверов.",
+	["No other servers found."] = "Других серверов не найдено.",
+	["Game link copied."] = "Ссылка скопирована.",
 }) do
 	RU[key] = value
 end
