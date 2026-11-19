@@ -18,7 +18,7 @@ local Stats = game:GetService("Stats")
 local LocalPlayer = Players.LocalPlayer
 
 local Library = {
-	Version = "1.12.0",
+	Version = "1.13.0",
 	Flags = {},
 	Windows = {},
 	Keybinds = {},
@@ -517,6 +517,20 @@ local IconDrawers = {
 	eye = function(f)
 		iconRing(f, 0, 2, 12, 8, 1.5, 4)
 		iconPart(f, 4, 4, 4, 4, 2)
+	end,
+	-- превью Visuals: союзники (человек с минусом)
+	userMinus = function(f)
+		iconPart(f, 1.5, 0, 4.5, 4.5, 3)
+		iconPart(f, -0.5, 6, 8.5, 5.5, 3)
+		iconPart(f, 8, 4.5, 4, 1.6, 1)
+	end,
+	-- превью Visuals: развернуть
+	expand = function(f)
+		iconPart(f, 7, 0.5, 4.5, 1.5, 0)
+		iconPart(f, 10, 0.5, 1.5, 4.5, 0)
+		iconPart(f, 0.5, 10, 4.5, 1.5, 0)
+		iconPart(f, 0.5, 7, 1.5, 4.5, 0)
+		iconPart(f, 5.3, 1, 1.4, 10, 1).Rotation = 45
 	end,
 	-- вкладка Legit: мишень
 	target = function(f)
@@ -1462,7 +1476,8 @@ function Container:AddDropdown(opts)
 	rebuild()
 	table.insert(Library._languageListeners, render)
 	setFlag(opts.Flag, dropdown:Get())
-	return self:_register(dropdown)
+	-- dropdown:AddColorpicker() ставит цветной квадрат слева от поля (как «Player ■ Disabled ⌄»)
+	return self:_attachAddons(self:_register(dropdown), acc)
 end
 
 -- Список с галочками (Scoreboard, Removals в референсе).
@@ -2341,12 +2356,271 @@ function Tab:AddSection(opts)
 	return section
 end
 
+-- Всплывающая панель, привязанная к вкладке (для кнопок превью и т.п.); попадает в конфиг.
+function Tab:CreatePanel(title)
+	local panel = self.window:_panel(title)
+	panel.path = self.Name .. ">" .. title
+	return panel
+end
+
+-- Превью персонажа в колонке вкладки (как в Visuals референса):
+-- сверху справа переключатель режимов и кнопки-иконки, ниже — ваш персонаж (вращается мышью).
+-- opts: { Side, Height, Modes = { { Name, Icon } }, Default, Callback(mode),
+--         Buttons = { { Icon, Callback(buttonInstance) } }, Expandable = true }
+function Tab:AddPreview(opts)
+	opts = opts or {}
+	local tab = self
+	local window = self.window
+	local column = opts.Side == "Left" and self.left or self.right
+	local count = column:GetAttribute("Sections") or 0
+	column:SetAttribute("Sections", count + 1)
+
+	local preview = { Mode = nil }
+	local frame = create("Frame", {
+		Name = "Preview",
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, opts.Height or 470),
+		LayoutOrder = count + 1,
+		Parent = column,
+	})
+
+	-- панель сверху: [режимы] [кнопки]
+	local toolbar = create("Frame", {
+		Name = "Toolbar",
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, 0, 0, 0),
+		Size = UDim2.fromOffset(0, 32),
+		AutomaticSize = Enum.AutomaticSize.X,
+		ZIndex = 3,
+		Parent = frame,
+	}, { listLayout(6, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center) })
+
+	local modeViews = {}
+	local function renderModes()
+		for name, view in pairs(modeViews) do
+			local active = name == preview.Mode
+			tween(view.button, 0.15, { BackgroundTransparency = active and 0 or 1 })
+			view.label.Visible = active
+			paintIcons(view.icon, active and Theme.Accent or Theme.Text)
+		end
+	end
+
+	function preview:SetMode(name, silent)
+		self.Mode = name
+		renderModes()
+		if not silent then
+			safeCall(opts.Callback, name)
+		end
+	end
+
+	for index, mode in ipairs(opts.Modes or {}) do
+		local button = create("TextButton", {
+			Name = mode.Name,
+			Text = "",
+			AutoButtonColor = false,
+			BackgroundColor3 = Theme.NavActive,
+			BackgroundTransparency = 1,
+			Size = UDim2.fromOffset(0, 30),
+			AutomaticSize = Enum.AutomaticSize.X,
+			LayoutOrder = index,
+			Parent = toolbar,
+		}, { corner(8), padding(9, 0, 10, 0), listLayout(8, Enum.FillDirection.Horizontal, Enum.VerticalAlignment.Center) })
+		local modeIcon = drawIcon(mode.Icon or "user", button, 1)
+		create("UIScale", { Scale = 1.25, Parent = modeIcon })
+		local modeLabel = tr(label({
+			Text = mode.Name,
+			Font = FONT_MEDIUM,
+			TextColor3 = Theme.Accent,
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.fromOffset(0, 18),
+			LayoutOrder = 2,
+			Parent = button,
+		}), mode.Name)
+		modeViews[mode.Name] = { button = button, icon = modeIcon, label = modeLabel }
+		button.MouseButton1Click:Connect(function()
+			if preview.Mode ~= mode.Name then
+				preview:SetMode(mode.Name)
+			end
+		end)
+	end
+
+	local function iconButton(iconName, order, color)
+		local button = create("TextButton", {
+			Text = "",
+			AutoButtonColor = false,
+			BackgroundColor3 = Theme.NavActive,
+			BackgroundTransparency = 1,
+			Size = UDim2.fromOffset(30, 30),
+			LayoutOrder = order,
+			Parent = toolbar,
+		}, { corner(8) })
+		local buttonIcon = drawIcon(iconName, button)
+		buttonIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+		buttonIcon.Position = UDim2.fromScale(0.5, 0.5)
+		create("UIScale", { Scale = 1.25, Parent = buttonIcon })
+		paintIcons(buttonIcon, color or Theme.Text)
+		button.MouseEnter:Connect(function()
+			tween(button, 0.12, { BackgroundTransparency = 0.4 })
+		end)
+		button.MouseLeave:Connect(function()
+			tween(button, 0.12, { BackgroundTransparency = 1 })
+		end)
+		return button
+	end
+
+	for index, info in ipairs(opts.Buttons or {}) do
+		local button = iconButton(info.Icon, 100 + index)
+		button.MouseButton1Click:Connect(function()
+			safeCall(info.Callback, button)
+		end)
+	end
+
+	-- «развернуть»: превью на всю ширину вкладки, левая колонка прячется
+	if opts.Expandable ~= false then
+		local expanded = false
+		local expandButton = iconButton("expand", 200, Theme.Accent)
+		local savedPosition, savedSize = column.Position, column.Size
+		local other = column == tab.left and tab.right or tab.left
+		expandButton.MouseButton1Click:Connect(function()
+			expanded = not expanded
+			window:_closeAll()
+			other.Visible = not expanded
+			column.Position = expanded and UDim2.fromScale(0, 0) or savedPosition
+			column.Size = expanded and UDim2.new(1, 0, 0, 0) or savedSize
+		end)
+	end
+
+	-- персонаж во ViewportFrame
+	local viewport = create("ViewportFrame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 36),
+		Size = UDim2.new(1, 0, 1, -36),
+		Ambient = Color3.fromRGB(170, 172, 185),
+		LightColor = Color3.new(1, 1, 1),
+		LightDirection = Vector3.new(-0.6, -1, -0.8),
+		Parent = frame,
+	})
+	local viewportCamera = Instance.new("Camera")
+	viewportCamera.FieldOfView = 35
+	viewportCamera.Parent = viewport
+	viewport.CurrentCamera = viewportCamera
+	local worldModel = Instance.new("WorldModel")
+	worldModel.Parent = viewport
+
+	local model, yaw, signature = nil, math.rad(20), nil
+
+	local function placeModel()
+		if model then
+			model:PivotTo(CFrame.Angles(0, yaw, 0))
+		end
+	end
+
+	local function characterSignature(character)
+		local parts = {}
+		for _, child in ipairs(character:GetChildren()) do
+			table.insert(parts, child.ClassName .. child.Name)
+		end
+		table.sort(parts)
+		return table.concat(parts, "|")
+	end
+
+	function preview:Refresh()
+		local character = LocalPlayer.Character
+		if not character then
+			return
+		end
+		signature = characterSignature(character)
+		local archivable = character.Archivable
+		character.Archivable = true
+		local ok, clone = pcall(function()
+			return character:Clone()
+		end)
+		character.Archivable = archivable
+		if not ok or not clone then
+			return
+		end
+		for _, item in ipairs(clone:GetDescendants()) do
+			if item:IsA("LuaSourceContainer") or item:IsA("Sound") or item:IsA("ForceField") or item:IsA("BillboardGui") then
+				item:Destroy()
+			elseif item:IsA("BasePart") then
+				item.Anchored = true
+			end
+		end
+		local humanoid = clone:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+		end
+		if model then
+			model:Destroy()
+		end
+		model = clone
+		model:PivotTo(CFrame.new())
+		local center, size = model:GetBoundingBox()
+		local distance = (size.Y / 2) / math.tan(math.rad(viewportCamera.FieldOfView / 2)) * 1.12
+		local target = Vector3.new(0, center.Position.Y, 0)
+		viewportCamera.CFrame = CFrame.lookAt(target + Vector3.new(0, 0, -distance), target)
+		model.Parent = worldModel
+		placeModel()
+	end
+
+	-- вращение мышью
+	local dragging, lastX = false, 0
+	viewport.InputBegan:Connect(function(input)
+		if isPointer(input) then
+			dragging, lastX = true, input.Position.X
+		end
+	end)
+	window:_track(UserInputService.InputChanged:Connect(function(input)
+		if dragging and isMove(input) then
+			yaw += (input.Position.X - lastX) * 0.012
+			lastX = input.Position.X
+			placeModel()
+		end
+	end))
+	window:_track(UserInputService.InputEnded:Connect(function(input)
+		if isPointer(input) then
+			dragging = false
+		end
+	end))
+
+	-- обновляем, когда персонаж появился или переоделся (в т.ч. кастомная модель)
+	window:_track(LocalPlayer.CharacterAdded:Connect(function()
+		task.wait(1.5)
+		pcall(preview.Refresh, preview)
+	end))
+	task.spawn(function()
+		while window.gui.Parent do
+			local character = LocalPlayer.Character
+			if character and frame.Visible and characterSignature(character) ~= signature then
+				pcall(preview.Refresh, preview)
+			end
+			task.wait(2)
+		end
+	end)
+
+	preview.Frame = frame
+	preview:SetMode(opts.Default or (opts.Modes and opts.Modes[1] and opts.Modes[1].Name), true)
+	pcall(preview.Refresh, preview)
+	return preview
+end
+
 ----------------------------------------------------------------------
 -- Window
 ----------------------------------------------------------------------
 
 local Window = {}
 Window.__index = Window
+
+-- Открыть/закрыть панель (созданную Tab:CreatePanel) под кнопкой.
+function Window:TogglePanel(panel, anchor)
+	if self:_isOpen(panel.frame) then
+		self:_closePopup(panel.frame)
+		return
+	end
+	panel.frame.Size = panel.fullSize
+	self:_openPopup(panel.frame, anchor, "below", nil, true)
+end
 
 function Window:_track(connection)
 	table.insert(self._connections, connection)
